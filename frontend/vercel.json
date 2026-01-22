@@ -1,0 +1,8 @@
+{
+  "build": {
+    "env": {
+      "LIGHTNINGCSS_FORCE_BUILD": "1",
+      "NODE_ENV": "production"
+    }
+  }
+}
