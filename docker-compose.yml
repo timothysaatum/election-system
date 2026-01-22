@@ -77,7 +77,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - REACT_APP_API_URL=http://backend:8000/api
+        - REACT_APP_API_URL=/api
         - NODE_ENV=production
     container_name: kratos_frontend
     ports:

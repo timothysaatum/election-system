@@ -12,8 +12,14 @@ ENV REACT_APP_API_URL=$REACT_APP_API_URL \
 # Copy package files
 COPY package*.json ./
 
+# Configure npm with longer timeouts and use npm registry
+RUN npm config set fetch-timeout 120000 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set registry https://registry.npmjs.org/
+
 # Install ALL dependencies and fix ajv conflict
-RUN npm install --legacy-peer-deps && \
+RUN npm install --legacy-peer-deps --verbose && \
     npm install ajv@^8.0.0 --save-dev --legacy-peer-deps
 
 # Copy source code
