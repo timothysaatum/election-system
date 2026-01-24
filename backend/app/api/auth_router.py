@@ -317,7 +317,7 @@ async def verify_voting_id(
                 "type": "voting_session",
                 "first_use": is_first_use,
             },
-            expires_delta=timedelta(minutes=100),
+            expires_delta=timedelta(minutes=10),
         )
 
         # Refresh token - long-lived (24 hours)
@@ -460,16 +460,17 @@ async def refresh_token(
     try:
         # Extract refresh token from cookie
         refresh_token_value = request.cookies.get("refresh_token")
-        print(refresh_token_value)
+        print(f"refresh token being printed here====={refresh_token_value}")
         if not refresh_token_value:
+            print("Caught in the teeth of dragon")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="No refresh token found. Please login again.",
             )
-
         # Decode refresh token with better error handling
         try:
             payload = TokenManager.decode_token(refresh_token_value)
+            print("payload here:====={payload}")
         except Exception as decode_error:
             # Clear invalid refresh token
             response.delete_cookie(
@@ -488,6 +489,7 @@ async def refresh_token(
 
         # Validate token type
         if token_type != "refresh_token":
+            print(f"Token type here====={token_type}")
             response.delete_cookie(key="refresh_token", path="/", domain=None)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -495,6 +497,7 @@ async def refresh_token(
             )
 
         if not session_id or not electorate_id:
+            print(f"printing session id{session_id}")
             response.delete_cookie(key="refresh_token", path="/", domain=None)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -526,6 +529,7 @@ async def refresh_token(
 
         if not session or not session.is_valid:
             # Clear invalid refresh token
+            
             response.delete_cookie(key="refresh_token", path="/", domain=None)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -533,7 +537,12 @@ async def refresh_token(
             )
 
         # Update session activity
-        session.update_activity(None)  # No IP/fingerprint check
+        current_ip = (
+            getattr(request.client, "host", "unknown")
+            if request and request.client
+            else "unknown"
+        )
+        session.update_activity(current_ip)
         await db.commit()
 
         # Issue new access token with fresh 10-minute expiration
@@ -541,6 +550,7 @@ async def refresh_token(
             data={
                 "sub": str(electorate_id),
                 "session_id": str(session_id),
+                "device_fingerprint": payload.get("device_fingerprint"),
                 "type": "voting_session",
             },
             expires_delta=timedelta(minutes=10),

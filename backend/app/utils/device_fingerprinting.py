@@ -183,7 +183,8 @@ class DeviceFingerprinter:
     @staticmethod
     def extract_device_info(request: Request) -> Dict[str, Any]:
         """
-        Extract comprehensive device fingerprinting information for robust authentication
+        Extract comprehensive device fingerprinting information for robust authentication.
+        Optimized for stability across multiple requests from the same device.
         """
         # Extract basic headers
         user_agent = request.headers.get("user-agent", "").strip()
@@ -223,13 +224,15 @@ class DeviceFingerprinter:
             normalized_encoding = ",".join(sorted(set(filter(None, encodings))))
 
         # ===== STABLE FINGERPRINT =====
-        # Use ONLY the most stable components that rarely change on the same device
+        # Use ONLY the most stable components that rarely change on the same device.
+        # REMOVED: accept-encoding, sec_ch_ua*, sec_fetch_* as these are VERY volatile
+        # These headers change based on browser extensions, privacy settings, and even request context
         stable_components = [
             parsed_ua.get("browser", ""),
             parsed_ua.get("os", ""),
             parsed_ua.get("device_type", ""),  # mobile/desktop/tablet
             normalized_language.split("-")[0] if normalized_language else "",  # Just language code (e.g., 'en')
-            # DO NOT include IP unless it's a public IP
+            # DO NOT include IP unless it's a public IP (local IPs are unstable in dev/testing)
             (
                 client_ip
                 if client_ip and not client_ip.startswith(("127.", "192.168.", "10.", "172.", "unknown"))
@@ -258,7 +261,7 @@ class DeviceFingerprinter:
             "accept_language": accept_language,
             "accept_encoding": accept_encoding,
             "client_ip": client_ip,
-            "fingerprint": fingerprint,  # ← More stable now
+            "fingerprint": fingerprint,  # ← More stable now (only browser + OS + device_type + language)
             "security_fingerprint": security_fingerprint,
             "parsed_ua": parsed_ua,
             "normalized_language": normalized_language,

@@ -11,8 +11,8 @@ const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect, index 
       onClick={() => onSelect(portfolio.id, candidate.id)}
       onContextMenu={(e) => e.preventDefault()}
       className={`relative group flex flex-col items-center p-6 rounded-3xl border-2 transition-all duration-300 hover:scale-105 ${isSelected
-          ? "border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 shadow-2xl ring-4 ring-blue-200"
-          : "border-gray-300 hover:border-blue-400 hover:bg-gray-50 hover:shadow-xl"
+        ? "border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 shadow-2xl ring-4 ring-blue-200"
+        : "border-gray-300 hover:border-blue-400 hover:bg-gray-50 hover:shadow-xl"
         }`}
       title="Select candidate"
     >
@@ -150,10 +150,23 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
     const loadBallot = async () => {
       try {
         setLoading(true);
+        setError(""); // Clear any previous errors
+        console.log("[VotingBallot] Loading ballot for voter:", voterData?.id);
         const data = await votingApi.getBallot();
+        console.log("[VotingBallot] Ballot loaded successfully:", data.length, "candidates");
         setCandidates(data);
       } catch (err) {
-        setError(err.message || "Failed to load ballot");
+        const errorMsg = err.message || "Failed to load ballot";
+        console.error("[VotingBallot] Ballot load error:", errorMsg, err);
+
+        // More detailed error messages
+        if (errorMsg.includes("Session expired") || errorMsg.includes("session") || errorMsg.includes("401")) {
+          setError("Your voting session has expired. Please verify your token again.");
+        } else if (errorMsg.includes("Not authenticated") || errorMsg.includes("Invalid")) {
+          setError("Authentication failed. Please verify your token and try again.");
+        } else {
+          setError(errorMsg);
+        }
       } finally {
         setLoading(false);
       }
@@ -413,8 +426,8 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
           onClick={handleSubmitVotes}
           disabled={submitting || selectedCount === 0}
           className={`group flex items-center gap-3 px-7 py-3 rounded-full font-semibold text-base shadow-2xl transition-all duration-300 ${submitting || selectedCount === 0
-              ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-              : "bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 hover:shadow-2xl hover:scale-105"
+            ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+            : "bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 hover:shadow-2xl hover:scale-105"
             }`}
           title={selectedCount === 0 ? "Make at least one selection" : "Review and submit your ballot"}
         >

@@ -460,6 +460,10 @@ class SessionManager:
         await db.commit()
         await db.refresh(session)
 
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[SESSION] Created session {session_id} for voter {user_id}, expires at {session.expires_at}")
+
         return session
 
     @staticmethod
@@ -550,12 +554,14 @@ class SessionManager:
         )
         normalized_encoding = SessionManager.normalize_header(accept_encoding)
 
-        # Fingerprint device (more stable components)
-        components = [
+        # Fingerprint device (ONLY use stable components that don't change between requests)
+        # REMOVED: accept_encoding, normalized_encoding, security headers
+        # These are too volatile and change based on browser extensions, privacy settings, etc.
+        stable_components = [
             parsed_ua.get("browser", ""),
             parsed_ua.get("os", ""),
-            normalized_language,
-            normalized_encoding,
+            parsed_ua.get("device_type", ""),  # mobile/desktop/tablet
+            normalized_language.split("-")[0] if normalized_language else "",  # Just language code
             (
                 client_ip
                 if not client_ip.startswith(("127.", "192.168.", "10.", "172."))
@@ -563,11 +569,12 @@ class SessionManager:
             ),
         ]
 
-        fingerprint_data = "|".join(filter(None, components))
+        fingerprint_data = "|".join(filter(None, stable_components))
         fingerprint = hashlib.sha256(fingerprint_data.encode("utf-8")).hexdigest()[:32]
 
-        # 3. Security fingerprint (includes security headers)
-        security_components = components + [
+        # 3. Security fingerprint (includes security headers for fraud detection, but not used for matching)
+        security_components = stable_components + [
+            normalized_encoding,
             security_headers.get("sec_ch_ua", ""),
             security_headers.get("sec_ch_ua_platform", ""),
             security_headers.get("connection", ""),
@@ -594,7 +601,7 @@ class SessionManager:
             "security_headers": security_headers,
             "timestamp": datetime.now(timezone.utc).timestamp(),
             # Fingerprint metadata
-            "fingerprint_components": len([c for c in components if c]),
+            "fingerprint_components": stable_components,
             "has_security_headers": bool(any(security_headers.values())),
         }
 

@@ -320,7 +320,7 @@ async def get_current_voter(
         session_id = payload.get("session_id")
         stored_fingerprint = payload.get("device_fingerprint")
         token_type = payload.get("type")
-
+        print(f"Payload here===={payload}")
         if electorate_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -371,16 +371,17 @@ async def get_current_voter(
 
         # Validate session
         if session_id and request:
+            logger.info(f"[AUTH] Validating session {session_id} for voter {voter.id}")
             session = await _validate_voter_session(
                 db, UUID(session_id), request, voter.id, stored_fingerprint
             )
             if not session:
-                logger.warning(
-                    f"Invalid session - Voter: {voter.id}, Session: {session_id}"
+                logger.error(
+                    f"[AUTH] Invalid session - Voter: {voter.id}, Session: {session_id}"
                 )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid or expired session",
+                    detail="Session expired or invalid. Please login again.",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
 
@@ -409,6 +410,7 @@ async def _validate_voter_session(
     session = result.scalar_one_or_none()
 
     if not session:
+        logger.warning(f"[AUTH] No session found for ID: {session_id}")
         return None
 
     expires_at = session.expires_at
@@ -417,28 +419,44 @@ async def _validate_voter_session(
 
     if not session.is_valid or expires_at < datetime.now(timezone.utc):
         if session.is_valid:
+            logger.warning(f"[AUTH] Session expired at {expires_at}")
             session.terminate("Session expired")
             await db.commit()
         return None
 
     if session.electorate_id != electorate_id:
+        logger.warning(f"[AUTH] Session electorate mismatch: {session.electorate_id} vs {electorate_id}")
         session.terminate("Session electorate mismatch")
         await db.commit()
         return None
 
+    # Device fingerprint validation - with improved logging and fallback logic
     if stored_fingerprint and request:
         current_device_info = DeviceFingerprinter.extract_device_info(request)
         current_fingerprint = current_device_info.get("fingerprint")
 
         if stored_fingerprint != current_fingerprint:
-            session.terminate("Device fingerprint mismatch")
-            await db.commit()
-            return None
-
-    if session.suspicious_activity:
-        session.terminate("Suspicious activity detected")
-        await db.commit()
-        return None
+            # Log detailed fingerprint mismatch info for debugging
+            logger.warning(
+                f"[AUTH] Device fingerprint mismatch for voter {electorate_id} "
+                f"- Session: {session_id} "
+                f"- Stored: {stored_fingerprint} "
+                f"- Current: {current_fingerprint} "
+                f"- Stored components: {session.device_info} "
+                f"- Current components: {current_device_info.get('fingerprint_components', [])} "
+                f"- Risk level: {current_device_info.get('risk_level', 'unknown')}"
+            )
+            
+            # During voting (when session exists), be more lenient
+            # Only terminate if risk level is high AND fingerprint doesn't match
+            if current_device_info.get("risk_level") == "high":
+                logger.error(f"[AUTH] High risk device detected during voting session for {electorate_id}")
+                session.terminate("Device fingerprint mismatch - High risk")
+                await db.commit()
+                return None
+            
+            # For low/medium risk, allow voting to continue (voting is time-sensitive)
+            logger.info(f"[AUTH] Allowing session to continue despite fingerprint change (low/medium risk)")
 
     current_ip = (
         getattr(request.client, "host", "unknown")

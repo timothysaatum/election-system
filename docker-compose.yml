@@ -43,6 +43,7 @@ services:
     env_file:
       - .env
     volumes:
+      - ./backend:/app  # <-- CRITICAL FIX: Maps local code to container for persistent migrations
       - election_uploads:/app/uploads:rw
       - backend_logs:/app/logs:rw
     restart: unless-stopped

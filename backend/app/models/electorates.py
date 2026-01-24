@@ -295,10 +295,7 @@ class VotingSession(Base):
         """Update session activity and IP address"""
         self.last_activity_at = datetime.now(timezone.utc)
         self.activity_count += 1
-
-        # Check for IP changes
-        if self.ip_address != current_ip:
-            self.suspicious_activity = True
+        self.ip_address = current_ip
 
     def terminate(self, reason: str = "logout"):
         """Terminate the session"""
