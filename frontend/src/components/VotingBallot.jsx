@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import { votingApi } from "../services/votingApi";
 import LoadingSpinner from "./shared/LoadingSpinner";
 
-const API_BASE_URL = "http://localhost:8000/api";
+const API_BASE_URL = process.env.REACT_APP_API_URL || "/api";
 
 // Memoized candidate card component for performance
 const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect, index }) => {

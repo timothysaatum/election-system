@@ -119,12 +119,13 @@ export const CandidateManager = ({ candidates, portfolios, onUpdate }) => {
     ), [candidates, searchTerm, filterPortfolio]);
 
   // Helper function to get full image URL
+  // Helper function to get full image URL
   const getImageUrl = (url) => {
     if (!url) return null;
     if (url.startsWith('http')) return url;
-    // Ensure URL starts with /
+    // Return relative path - nginx will handle it
     const cleanUrl = url.startsWith('/') ? url : `/${url}`;
-    return `http://localhost:8000${cleanUrl}`;
+    return cleanUrl;
   };
 
   const handleImageChange = async (e) => {
