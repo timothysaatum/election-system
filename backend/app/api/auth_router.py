@@ -43,7 +43,7 @@ security = HTTPBearer()
 
 
 @router.post("/verify-id", response_model=TokenVerificationResponse)
-@rate_limit_auth
+# @rate_limit_auth
 async def verify_voting_id(
     request: Request,
     response: Response,
