@@ -1,48 +1,43 @@
 import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import { votingApi } from "../services/votingApi";
 import LoadingSpinner from "./shared/LoadingSpinner";
+import { Shield, ChevronRight, ChevronLeft, CheckCircle2, Lock, Clock, Info } from "lucide-react";
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || "/api";
 
 /**
- * Enhanced Candidate Card for Multi-candidate Portfolios
- * Designed with a large image area to ensure faces are clearly visible.
+ * Official Candidate Card - Optimized for maximum visibility
  */
 const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect }) => {
   return (
     <button
       onClick={() => onSelect(portfolio.id, candidate.id)}
-      className={`relative group flex flex-col items-center p-6 rounded-[2.5rem] border-4 transition-all duration-300 transform ${isSelected
-          ? "border-blue-600 bg-blue-50 shadow-2xl scale-105"
-          : "border-gray-200 hover:border-blue-300 hover:bg-white hover:shadow-xl"
-        }`}
+      className={`relative group flex flex-col items-center p-8 rounded-2xl border-2 transition-all duration-200 ${isSelected
+          ? "border-blue-700 bg-blue-50/50 ring-1 ring-blue-700 shadow-md"
+          : "border-slate-200 bg-white hover:border-blue-400 hover:shadow-sm"
+        } w-full max-w-md`}
     >
-      {/* Selection Checkmark */}
       {isSelected && (
-        <div className="absolute -top-4 -right-4 w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center shadow-lg z-20 animate-in zoom-in">
-          <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-          </svg>
+        <div className="absolute top-4 right-4 text-blue-700 animate-in zoom-in">
+          <CheckCircle2 className="w-10 h-10 fill-blue-700 text-white" />
         </div>
       )}
 
-      {/* Large Image Container */}
-      <div className={`w-64 h-64 md:w-72 md:h-72 rounded-[2rem] overflow-hidden shadow-xl mb-6 bg-gray-100 border-4 transition-colors ${isSelected ? 'border-blue-400' : 'border-white'}`}>
+      {/* Large Square Image - Centered */}
+      <div className={`w-full aspect-square rounded-xl overflow-hidden mb-6 border border-slate-200 bg-slate-50 transition-transform duration-300 group-hover:scale-[1.02] flex items-center justify-center shadow-inner`}>
         <img
-          src={candidate.picture_url ? `${API_BASE_URL.replace("/api", "")}${candidate.picture_url}` : "https://via.placeholder.com/400x400?text=No+Photo"}
+          src={candidate.picture_url ? `${API_BASE_URL.replace("/api", "")}${candidate.picture_url}` : "https://via.placeholder.com/800x800?text=No+Photo"}
           alt={candidate.name}
           className="w-full h-full object-cover"
           loading="eager"
         />
       </div>
 
-      <div className="text-center">
-        <h3 className="text-2xl font-black text-gray-900 mb-1 leading-tight">{candidate.name}</h3>
-        {candidate.party && (
-          <span className="px-4 py-1 bg-indigo-100 text-indigo-700 text-[10px] font-black rounded-full uppercase tracking-widest">
-            {candidate.party}
-          </span>
-        )}
+      <div className="text-center w-full">
+        <h3 className="text-3xl font-black text-slate-900 mb-1 leading-tight">{candidate.name}</h3>
+        <p className="text-slate-500 font-bold text-sm uppercase tracking-widest">
+          {candidate.party || "Independent Candidate"}
+        </p>
       </div>
     </button>
   );
@@ -51,7 +46,7 @@ const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect }) => {
 const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
   const [candidates, setCandidates] = useState([]);
   const [selectedVotes, setSelectedVotes] = useState({});
-  const [currentStep, setCurrentStep] = useState(0); // Carousel navigation state
+  const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -60,7 +55,6 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
   const [securityPin, setSecurityPin] = useState("");
   const [pinError, setPinError] = useState("");
 
-  // Load Ballot Data
   useEffect(() => {
     const loadBallot = async () => {
       try {
@@ -76,7 +70,6 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
     loadBallot();
   }, []);
 
-  // Organize candidates by Portfolio
   const portfolios = useMemo(() => {
     const map = new Map();
     candidates.forEach((cand) => {
@@ -120,8 +113,6 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
 
   const handleFinalSubmit = async () => {
     if (!securityPin) return setPinError("PIN is required");
-
-    // Filter out "reject" votes if your API only expects chosen candidate IDs
     const finalVotes = Object.entries(selectedVotes)
       .filter(([_, value]) => value !== "reject")
       .map(([portfolio_id, candidate_id]) => ({ portfolio_id, candidate_id }));
@@ -139,110 +130,83 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <LoadingSpinner message="Securing your ballot..." />
+      <LoadingSpinner message="Establishing Secure Connection..." />
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col relative overflow-x-hidden">
-
-      {/* Sticky Header with Progress Bar */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b shadow-sm px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
+    <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans text-slate-900">
+      {/* Official Header */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-50 px-6 py-4 shadow-sm">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white font-black text-xl shadow-lg">
-              {currentStep + 1}
+            <div className="bg-slate-900 p-2.5 rounded-lg shadow-lg">
+              <Shield className="w-6 h-6 text-white" />
             </div>
             <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none mb-1">Office {currentStep + 1} of {portfolios.length}</p>
-              <h2 className="text-xl md:text-2xl font-black text-gray-900 leading-none">{currentPortfolio?.name}</h2>
+              <h1 className="text-xl font-black tracking-tighter text-slate-900 uppercase">Official Digital Ballot</h1>
+              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">
+                <span className="text-blue-600">Secure Session</span>
+                <span>•</span>
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {Math.floor(sessionTime / 60000)}:{(Math.floor((sessionTime % 60000) / 1000)).toString().padStart(2, '0')}</span>
+              </div>
             </div>
           </div>
 
-          <div className="hidden md:block flex-1 max-w-sm px-10">
-            <div className="w-full bg-gray-100 h-2.5 rounded-full overflow-hidden border">
-              <div
-                className="bg-blue-600 h-full transition-all duration-700 ease-in-out"
-                style={{ width: `${((currentStep + 1) / portfolios.length) * 100}%` }}
-              />
+          <div className="hidden md:flex flex-col items-end">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ballot Progress</span>
+            <div className="flex gap-1.5">
+              {portfolios.map((_, idx) => (
+                <div key={idx} className={`h-2 w-8 rounded-full transition-all duration-500 ${idx <= currentStep ? "bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.4)]" : "bg-slate-200"}`} />
+              ))}
             </div>
-          </div>
-
-          <div className="text-right">
-            <p className="text-xl font-mono font-black text-blue-600">
-              {Math.floor(sessionTime / 60000)}:{(Math.floor((sessionTime % 60000) / 1000)).toString().padStart(2, '0')}
-            </p>
           </div>
         </div>
       </header>
 
-      {/* Main Scrollable Area 
-          pb-52 ensures that even the tallest cards can be scrolled completely above the fixed footer 
-      */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-6 pt-12 pb-52">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-12">
+        <div className="mb-12 pb-8 border-b-2 border-slate-200/60">
+          <div className="flex items-center gap-4 mb-3">
+            <span className="bg-blue-600 text-white px-4 py-1 rounded-md font-black text-sm uppercase">Section {currentStep + 1}</span>
+          </div>
+          <h2 className="text-5xl font-black tracking-tight text-slate-900 mb-4">{currentPortfolio?.name}</h2>
+          <p className="text-slate-500 text-xl max-w-3xl font-medium leading-relaxed">
+            {currentPortfolio?.description || "Select candidate for this office to cast vote"}
+          </p>
+        </div>
+
         {currentPortfolio && (
-          <div key={currentPortfolio.id} className="animate-in fade-in slide-in-from-bottom-8 duration-500">
-
-            <div className="text-center mb-12">
-              <p className="text-gray-500 text-lg max-w-2xl mx-auto font-medium">
-                {currentPortfolio.description || "Review the candidate(s) below and make your selection for this office."}
-              </p>
-            </div>
-
+          <div className="animate-in fade-in slide-in-from-bottom-6 duration-700">
             {currentPortfolio.candidates.length === 1 ? (
-              /* --- Single Candidate Endorse/Reject View --- */
-              <div className="flex flex-col items-center">
-                <div className="bg-white rounded-[3.5rem] shadow-2xl p-10 md:p-14 border border-gray-100 flex flex-col items-center max-w-2xl w-full">
-                  <div className="w-full max-w-[340px] aspect-square rounded-[2.5rem] overflow-hidden shadow-2xl mb-10 ring-8 ring-slate-50 border-4 border-white bg-gray-50">
+              <div className="flex justify-center">
+                <div className="bg-white border border-slate-200 rounded-[3rem] p-12 md:p-16 max-w-4xl w-full shadow-xl flex flex-col items-center">
+                  <div className="w-full max-w-md aspect-square rounded-[2rem] overflow-hidden border-4 border-slate-50 shadow-2xl mb-10 ring-1 ring-slate-200">
                     <img
-                      src={currentPortfolio.candidates[0].picture_url ? `${API_BASE_URL.replace("/api", "")}${currentPortfolio.candidates[0].picture_url}` : "https://via.placeholder.com/500x500?text=No+Photo"}
+                      src={currentPortfolio.candidates[0].picture_url ? `${API_BASE_URL.replace("/api", "")}${currentPortfolio.candidates[0].picture_url}` : "https://via.placeholder.com/800x800"}
                       alt={currentPortfolio.candidates[0].name}
                       className="w-full h-full object-cover"
                     />
                   </div>
-
-                  <h3 className="text-4xl md:text-5xl font-black text-gray-900 text-center mb-3 leading-tight">
-                    {currentPortfolio.candidates[0].name}
-                  </h3>
-                  <p className="text-indigo-600 font-bold uppercase tracking-[0.3em] mb-12 text-sm">
-                    {currentPortfolio.candidates[0].party || "Independent Candidate"}
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full">
-                    <button
-                      onClick={() => handleSelection(currentPortfolio.id, currentPortfolio.candidates[0].id)}
-                      className={`py-7 rounded-2xl font-black text-2xl transition-all border-4 flex flex-col items-center gap-2 ${currentSelection === currentPortfolio.candidates[0].id
-                          ? "bg-green-600 border-green-200 text-white shadow-2xl scale-105"
-                          : "bg-white border-gray-100 text-green-600 hover:border-green-400"
-                        }`}
-                    >
-                      <span className="text-sm opacity-80">I Approve</span>
-                      ENDORSE
-                    </button>
-                    <button
-                      onClick={() => handleSelection(currentPortfolio.id, "reject")}
-                      className={`py-7 rounded-2xl font-black text-2xl transition-all border-4 flex flex-col items-center gap-2 ${currentSelection === "reject"
-                          ? "bg-red-600 border-red-200 text-white shadow-2xl scale-105"
-                          : "bg-white border-gray-100 text-red-600 hover:border-red-400"
-                        }`}
-                    >
-                      <span className="text-sm opacity-80">I Disapprove</span>
-                      REJECT
-                    </button>
+                  <div className="text-center">
+                    <h3 className="text-5xl font-black mb-2 text-slate-900">{currentPortfolio.candidates[0].name}</h3>
+                    <p className="text-blue-600 font-bold mb-10 tracking-[0.3em] uppercase text-lg">{currentPortfolio.candidates[0].party || "Independent"}</p>
+                    <div className="flex flex-wrap justify-center gap-6">
+                      <button
+                        onClick={() => handleSelection(currentPortfolio.id, currentPortfolio.candidates[0].id)}
+                        className={`px-12 py-5 rounded-2xl font-black text-2xl transition-all shadow-lg ${currentSelection === currentPortfolio.candidates[0].id ? "bg-blue-700 text-white scale-105" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+                      >ENDORSE</button>
+                      <button
+                        onClick={() => handleSelection(currentPortfolio.id, "reject")}
+                        className={`px-12 py-5 rounded-2xl font-black text-2xl transition-all shadow-lg ${currentSelection === "reject" ? "bg-red-700 text-white scale-105" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+                      >REJECT</button>
+                    </div>
                   </div>
                 </div>
               </div>
             ) : (
-              /* --- Multiple Candidates Grid View --- */
-              <div className="flex flex-wrap justify-center gap-8 md:gap-14">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-12 justify-items-center">
                 {currentPortfolio.candidates.map(cand => (
-                  <CandidateCard
-                    key={cand.id}
-                    candidate={cand}
-                    portfolio={currentPortfolio}
-                    isSelected={currentSelection === cand.id}
-                    onSelect={handleSelection}
-                  />
+                  <CandidateCard key={cand.id} candidate={cand} portfolio={currentPortfolio} isSelected={currentSelection === cand.id} onSelect={handleSelection} />
                 ))}
               </div>
             )}
@@ -250,101 +214,79 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
         )}
       </main>
 
-      {/* Fixed Bottom Navigation Carousel Bar */}
-      <footer className="fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-xl border-t p-6 z-40 shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)]">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-6">
+      <footer className="bg-white border-t border-slate-200 p-8 sticky bottom-0 z-50 backdrop-blur-md bg-white/90">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
           <button
             onClick={prevStep}
             disabled={currentStep === 0}
-            className={`px-10 py-5 font-black rounded-2xl transition-all flex items-center gap-2 ${currentStep === 0 ? "opacity-0 pointer-events-none" : "bg-gray-100 text-gray-500 hover:bg-gray-200 active:scale-95"
-              }`}
+            className={`flex items-center gap-3 px-8 py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all ${currentStep === 0 ? "opacity-0 pointer-events-none" : "text-slate-500 hover:bg-slate-100 active:scale-95"}`}
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M15 19l-7-7 7-7" /></svg>
-            BACK
+            <ChevronLeft className="w-5 h-5" /> PREVIOUS
           </button>
 
-          <div className="flex-1 max-w-md flex flex-col items-center">
+          <div className="flex items-center gap-8">
             {!hasSelected && (
-              <span className="text-xs font-bold text-orange-600 mb-2 animate-bounce">Please make a selection</span>
+              <div className="hidden lg:flex items-center gap-2 text-amber-600 font-black text-xs uppercase tracking-tighter animate-pulse">
+                <Info className="w-4 h-4" /> Selection Required
+              </div>
             )}
             <button
               onClick={nextStep}
               disabled={!hasSelected || submitting}
-              className={`w-full py-5 rounded-2xl font-black text-xl shadow-2xl transition-all transform flex items-center justify-center gap-3 ${hasSelected
-                  ? "bg-blue-600 text-white hover:scale-105 active:scale-95 shadow-blue-200 hover:bg-blue-700"
-                  : "bg-gray-200 text-gray-400 cursor-not-allowed"
+              className={`flex items-center gap-3 px-12 py-4 rounded-xl font-black text-lg uppercase tracking-widest transition-all shadow-xl ${hasSelected
+                ? "bg-slate-900 text-white hover:bg-blue-800 hover:translate-y-[-2px] active:translate-y-0"
+                : "bg-slate-200 text-slate-400 cursor-not-allowed"
                 }`}
             >
-              {currentStep === portfolios.length - 1 ? "FINISH & REVIEW" : "NEXT PORTFOLIO"}
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 7l5 5-5 5M6 7l5 5-5 5" /></svg>
+              {currentStep === portfolios.length - 1 ? "FINALIZE BALLOT" : "NEXT OFFICE"}
+              <ChevronRight className="w-6 h-6" />
             </button>
           </div>
         </div>
       </footer>
 
-      {/* Confirmation Modal */}
+      {/* Confirmation & Security PIN Modals */}
       {showConfirmModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 z-[100]">
-          <div className="bg-white rounded-[3rem] p-12 max-w-md w-full shadow-2xl text-center animate-in zoom-in duration-300">
-            <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-8 text-4xl shadow-inner">✓</div>
-            <h3 className="text-3xl font-black mb-4">Ballot Complete</h3>
-            <p className="text-gray-500 text-lg mb-10 leading-relaxed">
-              You have made selections for all <b>{portfolios.length}</b> offices. Ready to submit?
-            </p>
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-300">
+          <div className="bg-white rounded-3xl p-10 max-w-md w-full shadow-2xl border border-slate-100 text-center">
+            <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <CheckCircle2 className="w-12 h-12" />
+            </div>
+            <h3 className="text-3xl font-black text-slate-900 mb-3">Review Complete</h3>
+            <p className="text-slate-500 mb-10 font-medium">You have completed all sections of the ballot. Are you ready to submit your final choices?</p>
             <div className="space-y-4">
-              <button
-                onClick={() => { setShowConfirmModal(false); setShowSecurityPin(true); }}
-                className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-xl hover:bg-blue-700 transition-all"
-              >
-                PROCEED TO SUBMIT
-              </button>
-              <button
-                onClick={() => setShowConfirmModal(false)}
-                className="w-full py-4 text-gray-400 font-bold hover:bg-gray-50 rounded-xl"
-              >
-                REVIEW CHOICES
-              </button>
+              <button onClick={() => { setShowConfirmModal(false); setShowSecurityPin(true); }} className="w-full py-5 bg-blue-700 text-white rounded-2xl font-black text-xl hover:bg-blue-800 transition-all shadow-lg shadow-blue-200">SUBMIT MY BALLOT</button>
+              <button onClick={() => setShowConfirmModal(false)} className="w-full py-4 text-slate-400 font-bold hover:text-slate-600 transition-colors">GO BACK & REVIEW</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Security PIN Modal */}
       {showSecurityPin && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-lg flex items-center justify-center p-4 z-[110]">
-          <div className="bg-white rounded-[3rem] p-12 max-w-md w-full shadow-2xl text-center">
-            <h3 className="text-2xl font-black mb-2 text-gray-900">Authorize Vote</h3>
-            <p className="text-gray-500 mb-10 font-medium">Enter your secure PIN to finalize submission.</p>
-
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl flex items-center justify-center p-4 z-[110] animate-in zoom-in-95 duration-300">
+          <div className="bg-white rounded-[2.5rem] p-12 max-w-md w-full shadow-2xl">
+            <div className="flex justify-center mb-8 text-blue-700"><Lock className="w-16 h-16" /></div>
+            <h3 className="text-2xl font-black text-center mb-2 uppercase tracking-tighter">Digital Signature</h3>
+            <p className="text-slate-500 text-center mb-10 font-medium">Enter your secure 6-digit PIN to finalize and encrypt your ballot.</p>
             <input
               type="password"
               value={securityPin}
               onChange={(e) => { setSecurityPin(e.target.value); setPinError(""); }}
-              className="w-full text-center text-5xl tracking-[0.5em] font-mono border-b-8 border-blue-600 focus:outline-none mb-4 pb-2 text-blue-900"
+              className="w-full text-center text-5xl tracking-[0.6em] font-mono border-b-4 border-slate-900 focus:outline-none mb-6 pb-2 text-slate-900"
               autoFocus
               maxLength={6}
             />
-
-            {pinError && <p className="text-red-500 font-black mb-6 animate-shake">{pinError}</p>}
-
+            {pinError && <p className="text-red-600 text-sm font-black text-center mb-6 animate-bounce">{pinError}</p>}
             <button
               onClick={handleFinalSubmit}
               disabled={submitting}
-              className="w-full py-6 bg-green-600 text-white rounded-2xl font-black text-2xl hover:bg-green-700 shadow-xl disabled:bg-gray-400 transition-all mt-6"
+              className="w-full py-5 bg-blue-700 text-white rounded-2xl font-black text-2xl hover:bg-blue-800 disabled:bg-slate-400 shadow-xl transition-all"
             >
-              {submitting ? "SUBMITTING..." : "CAST MY VOTE"}
+              {submitting ? "ENCRYPTING..." : "CONFIRM SUBMISSION"}
             </button>
           </div>
         </div>
       )}
-
-      {/* Error Overlay */}
-      {error && (
-        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[150] bg-red-600 text-white px-8 py-4 rounded-2xl shadow-2xl font-bold animate-bounce">
-          {error}
-        </div>
-      )}
-
     </div>
   );
 };

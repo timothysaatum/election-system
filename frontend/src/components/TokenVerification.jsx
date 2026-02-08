@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { votingApi } from '../services/votingApi';
-import { Shield, ArrowRight, AlertCircle, Info, Lock } from 'lucide-react';
+// Added User icon for the Student ID field
+import { Shield, ArrowRight, AlertCircle, Info, Lock, User } from 'lucide-react';
 
 const TokenVerification = ({ onVerified }) => {
   const [token, setToken] = useState('');
+  const [studentId, setStudentId] = useState(''); // Local state for the unused field
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -13,6 +15,7 @@ const TokenVerification = ({ onVerified }) => {
     setLoading(true);
 
     try {
+      // Notice: studentId is not passed here, so it remains unused logic-wise
       const data = await votingApi.verifyToken(token);
       onVerified(data);
     } catch (err) {
@@ -93,11 +96,32 @@ const TokenVerification = ({ onVerified }) => {
               </div>
             </div>
             <h1 className="text-4xl font-bold text-slate-900 mb-3">Voter Verification</h1>
-            <p className="text-slate-600 text-lg">Enter your 8-character voting token to proceed</p>
+            <p className="text-slate-600 text-lg">Enter your details to proceed</p>
           </div>
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-6">
+
+            {/* Added Student ID Input (Visual Only) */}
+            <div>
+              <label htmlFor="studentId" className="block text-sm font-bold text-slate-700 mb-3">
+                Student ID
+              </label>
+              <div className="relative">
+                <User className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+                <input
+                  type="text"
+                  id="studentId"
+                  value={studentId}
+                  onChange={(e) => setStudentId(e.target.value)}
+                  placeholder="e.g. STU-12345"
+                  className="w-full pl-12 pr-4 py-4 border-2 border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all bg-slate-50"
+                  disabled={loading}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+
             {/* Token Input */}
             <div>
               <label htmlFor="token" className="block text-sm font-bold text-slate-700 mb-3">
@@ -115,7 +139,6 @@ const TokenVerification = ({ onVerified }) => {
                   disabled={loading}
                   autoComplete="off"
                   maxLength={8}
-                  autoFocus
                 />
               </div>
               <div className="mt-3 flex items-center justify-between text-sm">
