@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from app.models.electorates import Electorate
 from app.schemas.electorates import ElectorateCreate, ElectorateUpdate
 from sqlalchemy.orm import selectinload
@@ -33,14 +33,7 @@ async def get_electorate_by_student_id(
 async def get_electorates(
     db: AsyncSession, skip: int = 0, limit: int = 100
 ) -> List[Electorate]:
-    # result = await db.execute(
-    #     select(Electorate)
-    #     .options(selectinload(Electorate.voting_tokens))
-    #     .where(Electorate.is_deleted == False)
-    #     .offset(skip)
-    #     .limit(limit)
-    # )
-    # return result.scalars().all()
+    
     result = await db.execute(
         select(Electorate)
         .options(selectinload(Electorate.voting_tokens))
@@ -150,49 +143,14 @@ async def update_electorate(
     )
     return result.scalar_one()
 
-
 async def delete_electorate(db: AsyncSession, electorate_id: str) -> bool:
     result = await db.execute(
-        select(Electorate).where(Electorate.id == electorate_id)
+        delete(Electorate).where(Electorate.id == electorate_id)
     )
-    db_electorate = result.scalar_one_or_none()
-    if not db_electorate:
-        return False
-    db_electorate.is_deleted = True
     await db.commit()
-    return True
 
+    return result.rowcount > 0
 
-# async def bulk_create_electorates(
-#         db: AsyncSession, electorate_list: List[ElectorateCreate]
-#     ) -> List[Electorate]:
-#     objs = []
-#     for e in electorate_list:
-#         # Extract voting_pin and hash it
-#         electorate_data = e.model_dump()
-#         voting_pin = electorate_data.pop('voting_pin', None)
-        
-#         # Hash the voting pin if provided
-#         voting_pin_hash = hash_voting_pin(voting_pin) if voting_pin else ""
-        
-#         # Create the Electorate object with the correct field name
-#         obj = Electorate(
-#             voting_pin_hash=voting_pin_hash,
-#             **electorate_data
-#         )
-#         objs.append(obj)
-    
-#     db.add_all(objs)
-#     await db.commit()
-#     # Refresh each object, then re-query all with tokens eagerly loaded
-#     for obj in objs:
-#         await db.refresh(obj)
-
-#     ids = [obj.id for obj in objs]
-#     result = await db.execute(
-#         select(Electorate).options(selectinload(Electorate.voting_tokens)).where(Electorate.id.in_(ids))
-#     )
-#     return result.scalars().all()
 
 async def bulk_create_electorates(
     db: AsyncSession, electorate_list: List[ElectorateCreate]

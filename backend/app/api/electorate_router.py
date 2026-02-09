@@ -96,14 +96,14 @@ async def bulk_upload_electorates(
 ):
     # Get file extension
     file_extension = file.filename.lower().split(".")[-1]
-
+    print(f"Processing file: {file.filename} with extension: {file_extension}")  # Debug log
     if file_extension not in ["xlsx", "xls", "csv"]:
         raise HTTPException(
             status_code=400, detail="Only Excel and CSV files are supported."
         )
 
     contents = await file.read()
-
+    print(f"Received file: {file.filename} with size {len(contents)} bytes")  # Debug log
     # Read based on file type
     if file_extension == "csv":
         df = pd.read_csv(BytesIO(contents))
