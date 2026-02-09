@@ -1,10 +1,10 @@
 """
 Offline Voting Router
-Simplified voting for offline operations
+Simplified voting for offline operations - No PIN verification
 """
 
 from uuid import UUID
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from datetime import datetime, timezone
@@ -44,7 +44,22 @@ async def get_voting_ballot(
         
     Returns:
         List of active portfolios with their candidates
+        
+    Raises:
+        HTTPException: If voter has already voted
     """
+    # Check if voter has already voted
+    if electorate.has_voted:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "already_voted",
+                "message": "You have already cast your vote",
+                "voted_at": electorate.voted_at.isoformat() if electorate.voted_at else None,
+                "student_id": electorate.student_id
+            }
+        )
+    
     return await get_active_portfolios_for_voting(db)
 
 
@@ -58,6 +73,7 @@ async def cast_vote(
 ):
     """
     Cast votes for multiple portfolios - OFFLINE MODE
+    No PIN verification required
     
     Args:
         vote_data: Voting data containing list of votes
@@ -71,6 +87,18 @@ async def cast_vote(
     Raises:
         HTTPException: If validation fails or voter has already voted
     """
+    
+    # Check if voter has already voted
+    if electorate.has_voted:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "already_voted",
+                "message": "You have already cast your vote. Multiple voting is not allowed.",
+                "voted_at": electorate.voted_at.isoformat() if electorate.voted_at else None,
+                "student_id": electorate.student_id
+            }
+        )
     
     # Get session ID from token if available
     session_id = None

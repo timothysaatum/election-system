@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import { votingApi } from "../services/votingApi";
 import LoadingSpinner from "./shared/LoadingSpinner";
-import { Shield, ChevronRight, ChevronLeft, CheckCircle2, Lock, Clock, Info } from "lucide-react";
+import { Shield, ChevronRight, ChevronLeft, CheckCircle2, Clock, Info, AlertCircle } from "lucide-react";
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || "/api";
 
@@ -13,8 +13,8 @@ const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect }) => {
     <button
       onClick={() => onSelect(portfolio.id, candidate.id)}
       className={`relative group flex flex-col items-center p-8 rounded-2xl border-2 transition-all duration-200 ${isSelected
-          ? "border-blue-700 bg-blue-50/50 ring-1 ring-blue-700 shadow-md"
-          : "border-slate-200 bg-white hover:border-blue-400 hover:shadow-sm"
+        ? "border-blue-700 bg-blue-50/50 ring-1 ring-blue-700 shadow-md"
+        : "border-slate-200 bg-white hover:border-blue-400 hover:shadow-sm"
         } w-full max-w-md`}
     >
       {isSelected && (
@@ -43,6 +43,63 @@ const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect }) => {
   );
 });
 
+/**
+ * Already Voted Screen Component
+ */
+const AlreadyVotedScreen = ({ votedAt, studentId }) => {
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-12 text-center border-2 border-amber-200">
+        <div className="w-24 h-24 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-8">
+          <AlertCircle className="w-14 h-14" />
+        </div>
+
+        <h1 className="text-4xl font-black text-slate-900 mb-4">
+          You Have Already Voted
+        </h1>
+
+        <p className="text-xl text-slate-600 mb-8 leading-relaxed">
+          Our records show that you have already cast your vote in this election.
+          Multiple voting is not allowed to ensure fairness and integrity.
+        </p>
+
+        <div className="bg-slate-50 rounded-2xl p-6 mb-8">
+          <div className="grid grid-cols-2 gap-6 text-left">
+            <div>
+              <p className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">
+                Student ID
+              </p>
+              <p className="text-lg font-black text-slate-900">
+                {studentId}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">
+                Voted At
+              </p>
+              <p className="text-lg font-black text-slate-900">
+                {votedAt ? new Date(votedAt).toLocaleString() : "Recently"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t-2 border-slate-100 pt-6">
+          <p className="text-sm text-slate-500 mb-4">
+            Thank you for participating in this election. Your vote has been securely recorded.
+          </p>
+          <button
+            onClick={() => window.location.href = '/'}
+            className="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-all"
+          >
+            Return to Home
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
   const [candidates, setCandidates] = useState([]);
   const [selectedVotes, setSelectedVotes] = useState({});
@@ -51,9 +108,8 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [showSecurityPin, setShowSecurityPin] = useState(false);
-  const [securityPin, setSecurityPin] = useState("");
-  const [pinError, setPinError] = useState("");
+  const [alreadyVoted, setAlreadyVoted] = useState(false);
+  const [votedInfo, setVotedInfo] = useState(null);
 
   useEffect(() => {
     const loadBallot = async () => {
@@ -62,7 +118,19 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
         const data = await votingApi.getBallot();
         setCandidates(data);
       } catch (err) {
-        setError(err.message || "Failed to load ballot");
+        // Check if error is because user already voted
+        if (err.message && err.message.includes("already voted")) {
+          setAlreadyVoted(true);
+          // Try to parse additional info from error
+          try {
+            const errorData = JSON.parse(err.message);
+            setVotedInfo(errorData);
+          } catch {
+            setVotedInfo({ message: err.message });
+          }
+        } else {
+          setError(err.message || "Failed to load ballot");
+        }
       } finally {
         setLoading(false);
       }
@@ -112,7 +180,6 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
   };
 
   const handleFinalSubmit = async () => {
-    if (!securityPin) return setPinError("PIN is required");
     const finalVotes = Object.entries(selectedVotes)
       .filter(([_, value]) => value !== "reject")
       .map(([portfolio_id, candidate_id]) => ({ portfolio_id, candidate_id }));
@@ -122,15 +189,54 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
       const result = await votingApi.castVote(finalVotes);
       onVoteComplete(result);
     } catch (err) {
-      setError(err.message || "Failed to cast votes");
+      // Check if error is because user already voted
+      if (err.message && err.message.includes("already voted")) {
+        setAlreadyVoted(true);
+        setShowConfirmModal(false);
+        try {
+          const errorData = JSON.parse(err.message);
+          setVotedInfo(errorData);
+        } catch {
+          setVotedInfo({ message: err.message });
+        }
+      } else {
+        setError(err.message || "Failed to cast votes");
+      }
       setSubmitting(false);
-      setShowSecurityPin(false);
     }
   };
+
+  // Show already voted screen if user has already voted
+  if (alreadyVoted) {
+    return (
+      <AlreadyVotedScreen
+        votedAt={votedInfo?.voted_at}
+        studentId={votedInfo?.student_id || voterData?.student_id}
+      />
+    );
+  }
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
       <LoadingSpinner message="Establishing Secure Connection..." />
+    </div>
+  );
+
+  if (error && !alreadyVoted) return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
+        <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+          <AlertCircle className="w-10 h-10" />
+        </div>
+        <h2 className="text-2xl font-bold text-slate-900 mb-2">Error Loading Ballot</h2>
+        <p className="text-slate-600 mb-6">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700"
+        >
+          Try Again
+        </button>
+      </div>
     </div>
   );
 
@@ -245,45 +351,51 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
         </div>
       </footer>
 
-      {/* Confirmation & Security PIN Modals */}
+      {/* Confirmation Modal - No PIN Required */}
       {showConfirmModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-300">
-          <div className="bg-white rounded-3xl p-10 max-w-md w-full shadow-2xl border border-slate-100 text-center">
+          <div className="bg-white rounded-3xl p-10 max-w-lg w-full shadow-2xl border border-slate-100">
             <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
               <CheckCircle2 className="w-12 h-12" />
             </div>
-            <h3 className="text-3xl font-black text-slate-900 mb-3">Review Complete</h3>
-            <p className="text-slate-500 mb-10 font-medium">You have completed all sections of the ballot. Are you ready to submit your final choices?</p>
-            <div className="space-y-4">
-              <button onClick={() => { setShowConfirmModal(false); setShowSecurityPin(true); }} className="w-full py-5 bg-blue-700 text-white rounded-2xl font-black text-xl hover:bg-blue-800 transition-all shadow-lg shadow-blue-200">SUBMIT MY BALLOT</button>
-              <button onClick={() => setShowConfirmModal(false)} className="w-full py-4 text-slate-400 font-bold hover:text-slate-600 transition-colors">GO BACK & REVIEW</button>
-            </div>
-          </div>
-        </div>
-      )}
+            <h3 className="text-3xl font-black text-slate-900 mb-3 text-center">Confirm Your Vote</h3>
+            <p className="text-slate-500 mb-8 font-medium text-center">
+              You are about to submit your ballot. Please review your selections carefully before confirming.
+            </p>
 
-      {showSecurityPin && (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl flex items-center justify-center p-4 z-[110] animate-in zoom-in-95 duration-300">
-          <div className="bg-white rounded-[2.5rem] p-12 max-w-md w-full shadow-2xl">
-            <div className="flex justify-center mb-8 text-blue-700"><Lock className="w-16 h-16" /></div>
-            <h3 className="text-2xl font-black text-center mb-2 uppercase tracking-tighter">Digital Signature</h3>
-            <p className="text-slate-500 text-center mb-10 font-medium">Enter your secure 6-digit PIN to finalize and encrypt your ballot.</p>
-            <input
-              type="password"
-              value={securityPin}
-              onChange={(e) => { setSecurityPin(e.target.value); setPinError(""); }}
-              className="w-full text-center text-5xl tracking-[0.6em] font-mono border-b-4 border-slate-900 focus:outline-none mb-6 pb-2 text-slate-900"
-              autoFocus
-              maxLength={6}
-            />
-            {pinError && <p className="text-red-600 text-sm font-black text-center mb-6 animate-bounce">{pinError}</p>}
-            <button
-              onClick={handleFinalSubmit}
-              disabled={submitting}
-              className="w-full py-5 bg-blue-700 text-white rounded-2xl font-black text-2xl hover:bg-blue-800 disabled:bg-slate-400 shadow-xl transition-all"
-            >
-              {submitting ? "ENCRYPTING..." : "CONFIRM SUBMISSION"}
-            </button>
+            {/* Show vote summary */}
+            <div className="bg-slate-50 rounded-2xl p-6 mb-8 max-h-64 overflow-y-auto">
+              <h4 className="font-bold text-slate-700 mb-4 text-sm uppercase tracking-wider">Your Selections:</h4>
+              <div className="space-y-3">
+                {portfolios.map(portfolio => (
+                  <div key={portfolio.id} className="flex justify-between items-center text-sm">
+                    <span className="font-semibold text-slate-600">{portfolio.name}:</span>
+                    <span className="font-bold text-slate-900">
+                      {selectedVotes[portfolio.id] === "reject"
+                        ? "REJECTED"
+                        : portfolio.candidates.find(c => c.id === selectedVotes[portfolio.id])?.name || "Not selected"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <button
+                onClick={handleFinalSubmit}
+                disabled={submitting}
+                className="w-full py-5 bg-blue-700 text-white rounded-2xl font-black text-xl hover:bg-blue-800 transition-all shadow-lg shadow-blue-200 disabled:bg-slate-400 disabled:cursor-not-allowed"
+              >
+                {submitting ? "SUBMITTING..." : "CONFIRM & SUBMIT BALLOT"}
+              </button>
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                disabled={submitting}
+                className="w-full py-4 text-slate-400 font-bold hover:text-slate-600 transition-colors disabled:opacity-50"
+              >
+                GO BACK & REVIEW
+              </button>
+            </div>
           </div>
         </div>
       )}
