@@ -263,10 +263,10 @@ class VotingSession(Base):
     device_fingerprint: Mapped[str] = mapped_column(
         String(1550), nullable=False, index=True
     )
-    user_agent: Mapped[str] = mapped_column(Text, nullable=False)
-    user_agent_hash: Mapped[str] = mapped_column(String(1550), nullable=False, index=True)
-    ip_address: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
-    login_method: Mapped[str] = mapped_column(String(50), nullable=False)
+    user_agent: Mapped[str] = mapped_column(Text, nullable=True)
+    user_agent_hash: Mapped[str] = mapped_column(String(1550), nullable=True, index=True)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=True, index=True)
+    login_method: Mapped[str] = mapped_column(String(50), nullable=True)
     is_valid: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_activity_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
