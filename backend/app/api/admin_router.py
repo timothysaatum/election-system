@@ -1,6 +1,6 @@
 """
-Admin Router - Offline Version
-Brand new implementation for offline token management.
+Offline Admin Router
+Admin operations for offline voting system
 """
 
 import uuid
@@ -12,12 +12,12 @@ from datetime import datetime, timezone
 
 from app.core.database import get_db
 from app.schemas.electorates import (
-    BulkTokenGenerationRequest, 
-    ElectorateOut, 
-    ElectionResults, 
-    SingleTokenRegenerationRequest, 
-    SingleTokenRegenerationResponse, 
-    TokenGenerationRequest, 
+    BulkTokenGenerationRequest,
+    ElectorateOut,
+    ElectionResults,
+    SingleTokenRegenerationRequest,
+    SingleTokenRegenerationResponse,
+    TokenGenerationRequest,
     TokenGenerationResponse
 )
 from app.services.token_generation_service import BulkTokenGenerator
@@ -41,7 +41,17 @@ async def generate_tokens_for_all(
     db: AsyncSession = Depends(get_db),
     current_admin=Depends(get_current_admin),
 ):
-    """Generate tokens for all voters"""
+    """
+    Generate voting tokens for all eligible electorates
+    
+    Args:
+        request: Token generation request
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        TokenGenerationResponse with generated tokens
+    """
     result = await token_generator.generate_tokens_for_all_electorates(
         db=db,
         exclude_voted=request.exclude_voted,
@@ -55,7 +65,17 @@ async def generate_tokens_for_selected(
     db: AsyncSession = Depends(get_db),
     current_admin=Depends(get_current_admin),
 ):
-    """Generate tokens for selected voters"""
+    """
+    Generate voting tokens for selected electorates
+    
+    Args:
+        request: Bulk token generation request
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        TokenGenerationResponse with generated tokens
+    """
     result = await token_generator.generate_tokens_for_electorates(
         db=db,
         electorate_ids=request.electorate_ids,
@@ -70,7 +90,18 @@ async def regenerate_token(
     db: AsyncSession = Depends(get_db),
     current_admin=Depends(get_current_user),
 ):
-    """Regenerate token for one voter"""
+    """
+    Regenerate voting token for a single electorate
+    
+    Args:
+        electorate_id: Electorate UUID
+        request: Token regeneration request
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        SingleTokenRegenerationResponse with new token
+    """
     result = await token_generator.regenerate_token_for_electorate(
         db=db,
         electorate_id=electorate_id,
@@ -84,7 +115,17 @@ async def generate_tokens_for_portfolio(
     db: AsyncSession = Depends(get_db),
     current_admin=Depends(get_current_admin),
 ):
-    """Generate tokens for portfolio voters"""
+    """
+    Generate voting tokens for electorates who haven't voted for a portfolio
+    
+    Args:
+        portfolio_id: Portfolio UUID
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        TokenGenerationResponse with generated tokens
+    """
     result = await token_generator.generate_tokens_for_portfolio(
         db=db,
         portfolio_id=portfolio_id,
@@ -100,10 +141,25 @@ async def list_voters(
     db: AsyncSession = Depends(get_db),
     current_admin=Depends(get_current_user),
 ):
-    """List voters"""
+    """
+    List electorates with optional filtering
+    
+    Args:
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        has_voted: Optional filter by voting status
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        List of electorates
+    """
     voters = await get_electorates(db, skip=skip, limit=limit)
+    
+    # Apply has_voted filter if provided
     if has_voted is not None:
         voters = [v for v in voters if v.has_voted == has_voted]
+    
     return voters
 
 
@@ -113,10 +169,26 @@ async def get_voter(
     db: AsyncSession = Depends(get_db),
     current_admin=Depends(get_current_admin),
 ):
-    """Get voter details"""
+    """
+    Get detailed information about a specific voter
+    
+    Args:
+        voter_id: Voter UUID
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        ElectorateOut with voter details
+        
+    Raises:
+        HTTPException: If voter not found
+    """
     voter = await get_electorate(db, voter_id)
     if not voter:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Voter not found"
+        )
     return voter
 
 
@@ -125,7 +197,16 @@ async def get_election_statistics(
     db: AsyncSession = Depends(get_db),
     current_admin=Depends(get_current_user),
 ):
-    """Get stats"""
+    """
+    Get comprehensive election statistics
+    
+    Args:
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        Dictionary with various statistics
+    """
     return {
         "voting": await get_voting_statistics_engine(db),
         "tokens": await token_generator.get_token_statistics(db),
@@ -140,7 +221,16 @@ async def get_election_results(
     db: AsyncSession = Depends(get_db),
     current_admin=Depends(get_current_user),
 ):
-    """Get results"""
+    """
+    Get election results for all portfolios
+    
+    Args:
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        List of election results by portfolio
+    """
     return await get_all_election_results(db)
 
 
@@ -150,10 +240,42 @@ async def get_recent_activity(
     db: AsyncSession = Depends(get_db),
     current_admin=Depends(get_current_admin),
 ):
-    """Get recent votes"""
+    """
+    Get recent voting activity
+    
+    Args:
+        limit: Maximum number of recent votes to return
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        Dictionary with recent votes and statistics
+    """
     recent_votes = await get_recent_votes_engine(db, limit=limit)
+    
     return {
         "recent_votes": recent_votes,
         "total_recent_votes": len(recent_votes),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.get("/token-statistics")
+async def get_token_statistics(
+    db: AsyncSession = Depends(get_db),
+    current_admin=Depends(get_current_user),
+):
+    """
+    Get detailed token generation statistics
+    
+    Args:
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        Dictionary with token statistics
+    """
+    return await token_generator.get_token_statistics(db)
+
+
+__all__ = ["router"]

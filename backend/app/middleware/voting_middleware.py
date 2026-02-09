@@ -1,8 +1,9 @@
 """
-Voting Middleware
+Offline Voting Middleware
+Simplified validation for offline voting
 """
 
-from fastapi import Request, HTTPException, status
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
 import logging
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class VotingSecurityValidator:
-    """validator"""
+    """Offline voting validation"""
 
     @staticmethod
     async def validate_vote_request(
@@ -23,18 +24,31 @@ class VotingSecurityValidator:
         electorate_id: str,
         portfolio_id: str,
         candidate_id: str,
-        request: Request
     ) -> Dict[str, Any]:
-        """Validate vote"""
+        """
+        Validate vote request
         
-        # Check already voted
+        Args:
+            db: Database session
+            electorate_id: Electorate ID
+            portfolio_id: Portfolio ID
+            candidate_id: Candidate ID
+            
+        Returns:
+            Dictionary with validation results
+            
+        Raises:
+            HTTPException: If validation fails
+        """
+        
+        # Check if already voted for this portfolio
         if await check_electorate_voted_for_portfolio(db, electorate_id, portfolio_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Already voted for this portfolio"
             )
         
-        # Check portfolio
+        # Check portfolio exists and is active
         portfolio = await get_portfolio_engine(db, portfolio_id)
         if not portfolio or not portfolio.is_active:
             raise HTTPException(
@@ -42,7 +56,7 @@ class VotingSecurityValidator:
                 detail="Portfolio not found or inactive"
             )
         
-        # Check candidate
+        # Check candidate exists and is active
         candidate = await get_candidate_engine(db, candidate_id)
         if not candidate or not candidate.is_active:
             raise HTTPException(
@@ -50,15 +64,18 @@ class VotingSecurityValidator:
                 detail="Candidate not found or inactive"
             )
         
+        # Verify candidate belongs to portfolio
         if candidate.portfolio_id != portfolio_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Candidate not in portfolio"
+                detail="Candidate does not belong to this portfolio"
             )
         
         return {
             "valid": True,
             "portfolio": portfolio,
             "candidate": candidate,
-            "device_info": {"fingerprint": "offline", "client_ip": "127.0.0.1"}
         }
+
+
+__all__ = ["VotingSecurityValidator"]

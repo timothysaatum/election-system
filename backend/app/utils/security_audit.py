@@ -1,38 +1,47 @@
-from datetime import datetime
+"""
+Offline Security Audit Logger
+Simplified logging for offline voting system
+"""
+
+from datetime import datetime, timezone
 import json
+import logging
+
+logger = logging.getLogger("security_audit")
 
 
 class SecurityAuditLogger:
-    """Enhanced security audit logging for voting system"""
+    """Security audit logging for offline election system"""
 
     @staticmethod
     def log_security_event(
         event_type: str,
         user_id: str = None,
         ip_address: str = None,
-        device_fingerprint: str = None,
         details: dict = None,
         severity: str = "INFO",
     ):
-        """Log security events with structured data"""
-        import logging
-        import json
-        from datetime import datetime, timezone
-
-        logger = logging.getLogger("security_audit")
-
+        """
+        Log security events with structured data
+        
+        Args:
+            event_type: Type of security event
+            user_id: User or electorate ID
+            ip_address: IP address (usually localhost for offline)
+            details: Additional event details
+            severity: Log severity level
+        """
+        
         log_entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": event_type,
             "user_id": user_id,
-            "ip_address": ip_address,
-            "device_fingerprint": (
-                device_fingerprint[:8] + "..." if device_fingerprint else None
-            ),
+            "ip_address": ip_address or "127.0.0.1",
             "details": details or {},
             "severity": severity,
         }
 
+        # Log based on severity
         if severity == "ERROR":
             logger.error(json.dumps(log_entry))
         elif severity == "WARNING":
@@ -43,17 +52,20 @@ class SecurityAuditLogger:
     @staticmethod
     def log_voting_attempt(
         electorate_id: str,
-        ip_address: str,
-        device_fingerprint: str,
         success: bool,
         reason: str = None,
     ):
-        """Log voting attempt"""
+        """
+        Log voting attempt
+        
+        Args:
+            electorate_id: Electorate ID
+            success: Whether voting was successful
+            reason: Reason for failure (if applicable)
+        """
         SecurityAuditLogger.log_security_event(
             event_type="voting_attempt",
             user_id=electorate_id,
-            ip_address=ip_address,
-            device_fingerprint=device_fingerprint,
             details={"success": success, "reason": reason},
             severity="WARNING" if not success else "INFO",
         )
@@ -61,29 +73,72 @@ class SecurityAuditLogger:
     @staticmethod
     def log_session_creation(
         electorate_id: str,
-        ip_address: str,
-        device_fingerprint: str,
         session_duration: int,
     ):
-        """Log session creation"""
+        """
+        Log voting session creation
+        
+        Args:
+            electorate_id: Electorate ID
+            session_duration: Session duration in minutes
+        """
         SecurityAuditLogger.log_security_event(
             event_type="session_created",
             user_id=electorate_id,
-            ip_address=ip_address,
-            device_fingerprint=device_fingerprint,
             details={"session_duration_minutes": session_duration},
             severity="INFO",
         )
 
     @staticmethod
-    def log_security_violation(
-        violation_type: str, ip_address: str, device_fingerprint: str, details: dict
+    def log_token_generation(
+        admin_username: str,
+        token_count: int,
+        electorate_ids: list = None,
     ):
-        """Log security violations"""
+        """
+        Log token generation activity
+        
+        Args:
+            admin_username: Admin who generated tokens
+            token_count: Number of tokens generated
+            electorate_ids: List of electorate IDs (optional)
+        """
         SecurityAuditLogger.log_security_event(
-            event_type="security_violation",
-            ip_address=ip_address,
-            device_fingerprint=device_fingerprint,
-            details={"violation_type": violation_type, **details},
-            severity="ERROR",
+            event_type="token_generation",
+            user_id=admin_username,
+            details={
+                "token_count": token_count,
+                "electorate_count": len(electorate_ids) if electorate_ids else 0,
+            },
+            severity="INFO",
         )
+
+    @staticmethod
+    def log_admin_action(
+        admin_username: str,
+        action: str,
+        resource: str,
+        details: dict = None,
+    ):
+        """
+        Log admin actions
+        
+        Args:
+            admin_username: Admin username
+            action: Action performed
+            resource: Resource affected
+            details: Additional details
+        """
+        SecurityAuditLogger.log_security_event(
+            event_type="admin_action",
+            user_id=admin_username,
+            details={
+                "action": action,
+                "resource": resource,
+                **(details or {})
+            },
+            severity="INFO",
+        )
+
+
+__all__ = ["SecurityAuditLogger"]
