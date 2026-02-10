@@ -250,7 +250,7 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
               <Shield className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-black tracking-tighter text-slate-900 uppercase">Official Digital Ballot</h1>
+              <h1 className="text-xl font-black tracking-tighter text-slate-900 uppercase">Official Ballot</h1>
               <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">
                 <span className="text-blue-600">Secure Session</span>
                 <span>•</span>
