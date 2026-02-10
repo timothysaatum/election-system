@@ -399,7 +399,6 @@ class PortfolioOut(PortfolioBase):
 # Candidate Schemas
 class CandidateBase(BaseModel):
     name: str
-    party: Optional[str] = None
     picture_url: Optional[str] = None
     picture_filename: Optional[str] = None
     manifesto: Optional[str] = None
@@ -414,7 +413,6 @@ class CandidateCreate(CandidateBase):
 
 class CandidateUpdate(BaseModel):
     name: Optional[str] = None
-    party: Optional[str] = None
     picture_url: Optional[str] = None
     picture_filename: Optional[str] = None
     manifesto: Optional[str] = None
