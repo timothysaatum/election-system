@@ -1,6 +1,7 @@
 """
 Offline Token Generation Service
-Robust token generation for offline voting with high scalability
+4-CHARACTER TOKENS (AB12 format)
+Student ID conversion: slash to hyphen for storage
 """
 
 from typing import List, Dict, Any, Optional
@@ -19,6 +20,26 @@ from app.models.electorates import Electorate, VotingToken, Vote
 logger = logging.getLogger(__name__)
 
 
+class StudentIDConverter:
+    """Handle student ID conversion between slash and hyphen formats"""
+    
+    @staticmethod
+    def to_storage(student_id: str) -> str:
+        """
+        Convert student ID from slash to hyphen format for storage
+        Input: MLS/0201/19 → Output: MLS-0201-19
+        """
+        return student_id.replace("/", "-")
+    
+    @staticmethod
+    def to_display(student_id: str) -> str:
+        """
+        Convert student ID from hyphen to slash format for display
+        Input: MLS-0201-19 → Output: MLS/0201/19
+        """
+        return student_id.replace("-", "/")
+
+
 class BulkTokenGenerator:
     """High-performance token generator for offline voting"""
 
@@ -32,14 +53,14 @@ class BulkTokenGenerator:
     @staticmethod
     def _generate_token() -> str:
         """
-        Generate voting token in format: AB12-CD34
+        Generate voting token in format: AB12 (4 characters)
         
         Returns:
-            Formatted voting token
+            4-character voting token
         """
         chars = BulkTokenGenerator.SAFE_CHARS
-        code = ''.join(secrets.choice(chars) for _ in range(8))
-        return f"{code[:2]}{code[2:4]}-{code[4:6]}{code[6:8]}"
+        code = ''.join(secrets.choice(chars) for _ in range(4))
+        return code  # Returns 4-character token like "AB12"
 
     @staticmethod
     def _hash_token(token: str) -> str:
@@ -52,7 +73,7 @@ class BulkTokenGenerator:
         Returns:
             SHA-256 hash
         """
-        clean = token.replace("-", "").upper()
+        clean = token.replace("-", "").replace(" ", "").upper()
         return hashlib.sha256(clean.encode()).hexdigest()
 
     async def generate_tokens_for_electorates(
@@ -109,7 +130,7 @@ class BulkTokenGenerator:
                 for old_token in old_tokens:
                     old_token.revoked = True
                 
-                # Generate new token
+                # Generate new token (4 characters)
                 token = self._generate_token()
                 expires = datetime.now(timezone.utc) + timedelta(hours=24)
                 
@@ -126,10 +147,13 @@ class BulkTokenGenerator:
                 )
                 db.add(voting_token)
                 
+                # Convert student_id for display (hyphen to slash)
+                display_student_id = StudentIDConverter.to_display(electorate.student_id)
+                
                 tokens.append({
                     "electorate_id": str(electorate.id),
-                    "student_id": electorate.student_id,
-                    "name": f"{electorate.student_id}",  # Adjust if you have name field
+                    "student_id": display_student_id,  # Display with slashes
+                    "name": display_student_id,
                     "token": token,
                     "expires_at": expires.isoformat(),
                     "created": True,
@@ -308,4 +332,4 @@ class BulkTokenGenerator:
         }
 
 
-__all__ = ["BulkTokenGenerator"]
+__all__ = ["BulkTokenGenerator", "StudentIDConverter"]

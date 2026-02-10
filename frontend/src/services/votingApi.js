@@ -240,10 +240,14 @@ class VotingApiService {
    * Verify voting token
    */
   async verifyToken(token, options = {}) {
-    const cleanToken = token.replace(/[^A-Za-z0-9]/g, "");
+    const cleanToken = token
+      .replace(/[\s\-]/g, "")
+      .replace(/[^A-Za-z0-9]/g, "")
+      .toUpperCase();
 
-    if (cleanToken.length !== 8) {
-      throw new Error("Token must be exactly 8 characters");
+
+    if (cleanToken.length !== 4) {
+      throw new Error("Token must be exactly 4 characters");
     }
 
     console.log("[VotingAPI] Verifying token...");

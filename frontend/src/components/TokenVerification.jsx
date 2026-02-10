@@ -134,18 +134,18 @@ const TokenVerification = ({ onVerified }) => {
                   id="token"
                   value={token}
                   onChange={handleTokenChange}
-                  placeholder="ABCD1234"
+                  placeholder="A13E"
                   className="token-input w-full pl-12 pr-4 py-4 text-center text-3xl tracking-widest border-2 border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all uppercase bg-slate-50"
                   disabled={loading}
                   autoComplete="off"
-                  maxLength={8}
+                  maxLength={4}
                 />
               </div>
               <div className="mt-3 flex items-center justify-between text-sm">
-                <span className={`font-semibold ${token.length === 8 ? 'text-green-600' : 'text-slate-500'}`}>
-                  {token.length}/8 characters
+                <span className={`font-semibold ${token.length === 4 ? 'text-green-600' : 'text-slate-500'}`}>
+                  {token.length}/4 characters
                 </span>
-                {token.length === 8 && (
+                {token.length === 4 && (
                   <span className="flex items-center gap-1 text-green-600 font-semibold">
                     <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -167,7 +167,7 @@ const TokenVerification = ({ onVerified }) => {
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={loading || token.length !== 8}
+              disabled={loading || token.length !== 4}
               className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 px-6 rounded-xl font-bold text-lg hover:from-blue-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-400 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-3 shadow-lg hover:shadow-xl disabled:shadow-none"
             >
               {loading ? (

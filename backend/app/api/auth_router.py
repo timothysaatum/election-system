@@ -1,6 +1,6 @@
 """
 Offline Authentication Router
-Simplified authentication for offline voting
+4-CHARACTER TOKENS + Student ID Conversion (slash/hyphen)
 """
 
 import os
@@ -25,6 +25,7 @@ from app.schemas.electorates import (
 )
 from app.crud.crud_voting_tokens import get_voting_token_by_hash, update_token_usage
 from app.utils.security import TokenManager, verify_password
+from app.services.token_generation_service import StudentIDConverter
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -38,6 +39,7 @@ async def verify_voting_id(
 ):
     """
     Verify voting token and create session - OFFLINE MODE
+    4-CHARACTER TOKENS (e.g., AB12)
     
     Args:
         request: HTTP request
@@ -59,13 +61,14 @@ async def verify_voting_id(
             detail="Token cannot be empty"
         )
     
-    # Clean and normalize token
+    # Clean and normalize token - remove spaces, hyphens, make uppercase
     clean_token = token_input.replace("-", "").replace(" ", "").upper()
     
-    if len(clean_token) != 8:
+    # Validate token length (4 characters)
+    if len(clean_token) != 4:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid token format. Expected 8 characters, got {len(clean_token)}"
+            detail=f"Invalid token format. Expected 4 characters, got {len(clean_token)}"
         )
     
     if not clean_token.isalnum():
@@ -140,6 +143,9 @@ async def verify_voting_id(
         expires_delta=timedelta(minutes=30),
         session_id=session.id,
     )
+    
+    # Convert student_id for display (hyphen to slash)
+    # The electorate object will be converted in the response model
     
     return TokenVerificationResponse(
         access_token=access_token,

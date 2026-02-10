@@ -1,9 +1,26 @@
-from pydantic import BaseModel, ConfigDict, Field
+"""
+Complete Electorate Schemas with Student ID Conversion
+Includes ALL schemas from original + student ID conversion
+"""
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, field_validator
-from datetime import datetime
 import uuid
+
+
+class StudentIDConverter:
+    """Handle student ID conversion between formats"""
+    
+    @staticmethod
+    def to_storage(student_id: str) -> str:
+        """Convert slash to hyphen for storage: MLS/0201/19 → MLS-0201-19"""
+        return student_id.replace("/", "-")
+    
+    @staticmethod
+    def to_display(student_id: str) -> str:
+        """Convert hyphen to slash for display: MLS-0201-19 → MLS/0201/19"""
+        return student_id.replace("-", "/")
 
 
 class ElectorateBase(BaseModel):
@@ -13,12 +30,17 @@ class ElectorateBase(BaseModel):
     phone_number: Optional[str] = None
     email: Optional[str] = None
 
-    @field_validator("student_id")
+    @field_validator("student_id", mode="before")
     @classmethod
-    def validate_student_id(cls, v):
-        if not v or len(v) < 5:
+    def convert_student_id_for_storage(cls, v):
+        """Convert student ID from slash to hyphen format for storage"""
+        if not v:
+            raise ValueError("student_id is required")
+        # Convert slashes to hyphens
+        v_converted = v.replace("/", "-")
+        if len(v_converted) < 5:
             raise ValueError("student_id must be at least 5 characters")
-        return v
+        return v_converted
 
     @field_validator("year_level")
     @classmethod
@@ -33,9 +55,8 @@ class ElectorateBase(BaseModel):
         if v is not None and len(v) > 14:
             raise ValueError("phone_number must be at most 14 characters")
         
-
-        if v is not None and  isinstance(v, int):
-            raise ValueError("phone_number must be a valid integer string")
+        if v is not None and isinstance(v, int):
+            raise ValueError("phone_number must be a valid string")
         
         return v
 
@@ -50,64 +71,6 @@ class ElectorateBase(BaseModel):
         return v
 
 
-class TokenGenerationRequest(BaseModel):
-    election_name: str = "Election"
-    voting_url: str = "http://localhost:8000"
-    send_notifications: bool = True
-    notification_methods: List[str] = ["email", "sms"]
-    exclude_voted: bool = True
-
-
-class BulkTokenGenerationRequest(BaseModel):
-    electorate_ids: List[uuid.UUID]
-    election_name: str = "Election"
-    voting_url: str = "http://localhost:8000"
-    send_notifications: bool = True
-    notification_methods: List[str] = ["email", "sms"]
-
-    @field_validator("electorate_ids")
-    @classmethod
-    def validate_electorate_ids_not_empty(cls, v):
-        if not v:
-            raise ValueError("At least one electorate ID is required")
-        return v
-
-
-class SingleTokenRegenerationRequest(BaseModel):
-    election_name: str = "Election"
-    voting_url: str = "http://localhost:8000"
-    send_notification: bool = True
-    notification_methods: List[str] = ["email", "sms"]
-
-
-class GeneratedTokenInfo(BaseModel):
-    electorate_id: uuid.UUID
-    student_id: str
-    name: str
-    token: str
-    expires_at: datetime
-    created: bool
-
-
-class TokenGenerationResponse(BaseModel):
-    success: bool
-    message: str
-    generated_tokens: int
-    tokens: List[GeneratedTokenInfo]
-    notifications_queued: bool = False
-    notifications_sent: Optional[int] = None
-    failed_notifications: Optional[int] = None
-
-
-class SingleTokenRegenerationResponse(BaseModel):
-    success: bool
-    message: str
-    token: str
-    expires_at: datetime
-    notification_sent: bool = False
-    notification_result: Optional[dict] = None
-
-
 class ElectorateCreate(ElectorateBase):
     pass
 
@@ -119,13 +82,22 @@ class ElectorateUpdate(BaseModel):
     phone_number: Optional[str] = None
     email: Optional[str] = None
 
+    @field_validator("student_id", mode="before")
+    @classmethod
+    def convert_student_id_for_storage(cls, v):
+        """Convert student ID from slash to hyphen format for storage"""
+        if v is not None:
+            return v.replace("/", "-")
+        return v
+
     @field_validator("phone_number")
+    @classmethod
     def validate_phone_number(cls, v):
         if v is not None and len(v) > 14:
             raise ValueError("phone_number must be at most 14 characters")
 
         if v is not None and isinstance(v, int):
-            raise ValueError("phone_number must be a valid integer string")
+            raise ValueError("phone_number must be a valid string")
 
         return v
 
@@ -141,18 +113,30 @@ class ElectorateUpdate(BaseModel):
 
 
 class ElectorateOut(ElectorateBase):
+    """
+    Electorate output schema with automatic student ID conversion
+    Converts hyphen format (storage) to slash format (display)
+    """
     id: uuid.UUID
     has_voted: bool
     voted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-
     voting_token: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
+    @model_serializer(mode='wrap')
+    def serialize_model(self, serializer):
+        """Custom serializer to convert student_id to display format"""
+        data = serializer(self)
+        # Convert student_id from hyphen to slash for display
+        if 'student_id' in data and data['student_id']:
+            data['student_id'] = StudentIDConverter.to_display(data['student_id'])
+        return data
 
-# Device Registration Schemas
+
+# Device Registration Schemas (kept for compatibility)
 class LocationData(BaseModel):
     latitude: float
     longitude: float
@@ -173,8 +157,8 @@ class DeviceInfo(BaseModel):
 
 class DeviceRegistrationRequest(BaseModel):
     full_name: str
-    biometric_data: Optional[str] = None  # Will be hashed
-    device_password: Optional[str] = None  # Will be hashed
+    biometric_data: Optional[str] = None
+    device_password: Optional[str] = None
     location: Optional[LocationData] = None
 
 
@@ -308,7 +292,7 @@ class LinkRegistrationResponse(BaseModel):
 
 # Token Verification Schemas
 class TokenVerificationRequest(BaseModel):
-    token: str
+    token: str  # Now accepts 4-character tokens
     current_location: Optional[LocationData] = None
 
 
@@ -320,6 +304,65 @@ class TokenVerificationResponse(BaseModel):
     message: str
     device_mismatch: bool = False
     location_mismatch: bool = False
+
+
+# Token Generation Schemas
+class TokenGenerationRequest(BaseModel):
+    election_name: str = "Election"
+    voting_url: str = "http://localhost:8000"
+    send_notifications: bool = False
+    notification_methods: List[str] = []
+    exclude_voted: bool = True
+
+
+class BulkTokenGenerationRequest(BaseModel):
+    electorate_ids: List[uuid.UUID]
+    election_name: str = "Election"
+    voting_url: str = "http://localhost:8000"
+    send_notifications: bool = False
+    notification_methods: List[str] = []
+
+    @field_validator("electorate_ids")
+    @classmethod
+    def validate_electorate_ids_not_empty(cls, v):
+        if not v:
+            raise ValueError("At least one electorate ID is required")
+        return v
+
+
+class SingleTokenRegenerationRequest(BaseModel):
+    election_name: str = "Election"
+    voting_url: str = "http://localhost:8000"
+    send_notification: bool = False
+    notification_methods: List[str] = []
+
+
+class GeneratedTokenInfo(BaseModel):
+    electorate_id: uuid.UUID
+    student_id: str  # Already converted to display format in service
+    name: str
+    token: str  # Now 4 characters instead of 8
+    expires_at: datetime
+    created: bool
+
+
+class TokenGenerationResponse(BaseModel):
+    success: bool
+    message: str
+    generated_tokens: int
+    tokens: List[GeneratedTokenInfo]
+    notifications_queued: bool = False
+    notifications_sent: Optional[int] = None
+    failed_notifications: Optional[int] = None
+
+
+class SingleTokenRegenerationResponse(BaseModel):
+    success: bool
+    message: str
+    token: str  # 4 characters
+    expires_at: datetime
+    notification_sent: bool = False
+    notification_result: Optional[dict] = None
 
 
 # Portfolio Schemas
@@ -356,6 +399,7 @@ class PortfolioOut(PortfolioBase):
 # Candidate Schemas
 class CandidateBase(BaseModel):
     name: str
+    party: Optional[str] = None
     picture_url: Optional[str] = None
     picture_filename: Optional[str] = None
     manifesto: Optional[str] = None
@@ -370,6 +414,7 @@ class CandidateCreate(CandidateBase):
 
 class CandidateUpdate(BaseModel):
     name: Optional[str] = None
+    party: Optional[str] = None
     picture_url: Optional[str] = None
     picture_filename: Optional[str] = None
     manifesto: Optional[str] = None
@@ -398,12 +443,14 @@ class VotingCreation(BaseModel):
     votes: List[VoteCreate]
 
     @field_validator("votes")
+    @classmethod
     def validate_votes_not_empty(cls, v):
         if not v:
             raise ValueError("At least one vote is required")
         return v
 
     @field_validator("votes")
+    @classmethod
     def validate_unique_portfolios(cls, v):
         portfolio_ids = [vote.portfolio_id for vote in v]
         if len(portfolio_ids) != len(set(portfolio_ids)):
@@ -424,12 +471,8 @@ class VoteOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-# Voting Session Schemas
-class VotingSessionCreate(BaseModel):
-    portfolio_id: uuid.UUID
-    candidate_id: uuid.UUID
 
-
+# Voting Session Response
 class VotingSessionResponse(BaseModel):
     success: bool
     message: str
@@ -443,8 +486,8 @@ class ElectionResults(BaseModel):
     portfolio_id: uuid.UUID
     portfolio_name: str
     total_votes: int
-    candidates: list[dict]  # List of candidates with vote counts
-    winner: Optional[dict] = None  # Winner candidate info
+    candidates: list[dict]
+    winner: Optional[dict] = None
 
 
 class ElectionSummary(BaseModel):
@@ -456,6 +499,7 @@ class ElectionSummary(BaseModel):
     results: list[ElectionResults]
 
 
+# Admin Authentication Schemas
 class AdminLoginRequest(BaseModel):
     username: str
     password: str
@@ -463,19 +507,13 @@ class AdminLoginRequest(BaseModel):
 
 class AdminLoginResponse(BaseModel):
     """Response for admin/staff login"""
-
     access_token: str = Field(..., description="JWT access token")
     token_type: str = Field(default="bearer", description="Token type")
     expires_in: int = Field(..., description="Token expiration in seconds")
     username: str = Field(..., description="Username of logged in user")
-    role: str = Field(
-        ..., description="User role: admin, ec_official, or polling_agent"
-    )
+    role: str = Field(..., description="User role: admin, ec_official, or polling_agent")
     permissions: List[str] = Field(default_factory=list, description="User permissions")
-    is_admin: bool = Field(
-        default=False,
-        description="Whether user has admin role (backward compatibility)",
-    )
+    is_admin: bool = Field(default=False, description="Whether user has admin role")
 
     class Config:
         json_schema_extra = {
@@ -493,15 +531,11 @@ class AdminLoginResponse(BaseModel):
 
 class AdminVerifyResponse(BaseModel):
     """Response for token verification"""
-
     valid: bool = Field(..., description="Whether token is valid")
     username: str = Field(..., description="Username from token")
     role: str = Field(..., description="User role from token")
     permissions: List[str] = Field(default_factory=list, description="User permissions")
-    is_admin: bool = Field(
-        default=False,
-        description="Whether user has admin role (backward compatibility)",
-    )
+    is_admin: bool = Field(default=False, description="Whether user has admin role")
 
     class Config:
         json_schema_extra = {
@@ -518,3 +552,54 @@ class AdminVerifyResponse(BaseModel):
 class PasswordHashResponse(BaseModel):
     password_hash: str
     message: str
+
+
+__all__ = [
+    "StudentIDConverter",
+    "ElectorateBase",
+    "ElectorateCreate",
+    "ElectorateUpdate",
+    "ElectorateOut",
+    "LocationData",
+    "DeviceInfo",
+    "DeviceRegistrationRequest",
+    "DeviceRegistrationResponse",
+    "DeviceRegistrationOut",
+    "RegistrationLinkCreate",
+    "RegistrationLinkOut",
+    "VotingTokenCreate",
+    "VotingTokenOut",
+    "VotingTokenVerification",
+    "VotingSessionOut",
+    "VoterSession",
+    "VoterToken",
+    "VoterAuthSchema",
+    "LinkRegistrationRequest",
+    "LinkRegistrationResponse",
+    "TokenVerificationRequest",
+    "TokenVerificationResponse",
+    "TokenGenerationRequest",
+    "BulkTokenGenerationRequest",
+    "SingleTokenRegenerationRequest",
+    "GeneratedTokenInfo",
+    "TokenGenerationResponse",
+    "SingleTokenRegenerationResponse",
+    "PortfolioBase",
+    "PortfolioCreate",
+    "PortfolioUpdate",
+    "PortfolioOut",
+    "CandidateBase",
+    "CandidateCreate",
+    "CandidateUpdate",
+    "CandidateOut",
+    "VoteCreate",
+    "VotingCreation",
+    "VoteOut",
+    "VotingSessionResponse",
+    "ElectionResults",
+    "ElectionSummary",
+    "AdminLoginRequest",
+    "AdminLoginResponse",
+    "AdminVerifyResponse",
+    "PasswordHashResponse",
+]
