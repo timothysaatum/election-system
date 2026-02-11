@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle, Award, Home, Info, AlertCircle, Sparkles } from 'lucide-react';
 
 const VoteSuccess = ({ result, onClose }) => {
-  const [countdown, setCountdown] = useState(10);
+  const [countdown, setCountdown] = useState(5);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -200,14 +200,14 @@ const VoteSuccess = ({ result, onClose }) => {
               className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 px-6 rounded-xl font-bold text-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
             >
               <Home className="w-6 h-6" />
-              Return to Home
+              Ready for Next Voter
             </button>
 
             <div className="text-center">
               <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full">
                 <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
                 <span className="text-sm text-slate-600">
-                  Redirecting in <span className="font-bold text-slate-900">{countdown}s</span>
+                  Auto-continuing in <span className="font-bold text-slate-900">{countdown}s</span>
                 </span>
               </div>
             </div>

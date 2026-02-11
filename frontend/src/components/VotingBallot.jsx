@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import { votingApi } from "../services/votingApi";
 import LoadingSpinner from "./shared/LoadingSpinner";
 import { Shield, ChevronRight, ChevronLeft, CheckCircle2, Clock, Info, AlertCircle } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || "/api";
 
@@ -51,9 +50,7 @@ const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect }) => {
 /**
  * Already Voted Screen Component
  */
-const AlreadyVotedScreen = ({ votedAt, studentId }) => {
-  const navigate = useNavigate();
-
+const AlreadyVotedScreen = ({ votedAt, studentId, onSessionEnd }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
       <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-12 text-center border-2 border-amber-200">
@@ -92,10 +89,10 @@ const AlreadyVotedScreen = ({ votedAt, studentId }) => {
 
         <div className="border-t-2 border-slate-100 pt-6">
           <p className="text-sm text-slate-500 mb-4">
-            Thank you for participating in this election. Your vote has been securely recorded.
+            Your vote has been securely recorded. Thank you.
           </p>
           <button
-            onClick={() => navigate('/vote')}
+            onClick={onSessionEnd}
             className="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-all"
           >
             Return to Token Verification
@@ -106,8 +103,7 @@ const AlreadyVotedScreen = ({ votedAt, studentId }) => {
   );
 };
 
-const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
-  const navigate = useNavigate();
+const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) => {
   const [candidates, setCandidates] = useState([]);
   const [selectedVotes, setSelectedVotes] = useState({});
   const [currentStep, setCurrentStep] = useState(0);
@@ -192,13 +188,8 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
     setSubmitting(true);
     try {
       const result = await votingApi.castVote(finalVotes);
-      // Navigate to token verification page after successful vote
-      navigate('/auth/verify-id', {
-        state: {
-          voteSuccess: true,
-          message: 'Your vote has been successfully submitted!'
-        }
-      });
+      // Call the callback to handle successful vote
+      onVoteComplete(result);
     } catch (err) {
       if (err.message && err.message.includes("already voted")) {
         setAlreadyVoted(true);
@@ -221,6 +212,7 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
       <AlreadyVotedScreen
         votedAt={votedInfo?.voted_at}
         studentId={votedInfo?.student_id || voterData?.student_id}
+        onSessionEnd={onSessionEnd}
       />
     );
   }

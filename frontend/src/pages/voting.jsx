@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import TokenVerification from '../components/TokenVerification';
 import VotingBallot from '../components/VotingBallot';
+import VoteSuccess from '../components/VoteSuccess';
 import { useVotingSession } from '../hooks/useVotingSession';
 import LoadingSpinner from '../components/shared/LoadingSpinner';
 
@@ -27,7 +28,8 @@ const VotingPage = () => {
   // Handle session timeout
   useEffect(() => {
     if (sessionTime === 0 && step === 'vote') {
-      handleSessionTimeout();
+      handleSessionEnd();
+      alert('Your session has expired. Please verify your token again.');
     }
   }, [sessionTime, step]);
 
@@ -39,18 +41,19 @@ const VotingPage = () => {
   const handleVoteComplete = (result) => {
     setVoteResult(result);
     logout(); // Clear session after successful vote
+    setStep('success'); // Show success screen instead of alert
+  };
 
-    // Show success message
-    alert('Your vote has been submitted successfully! Thank you for voting.');
-
-    // Reset to verification page
+  const handleSuccessClose = () => {
+    // Reset to verification page for next voter
+    setVoteResult(null);
     setStep('verify');
   };
 
-  const handleSessionTimeout = () => {
+  const handleSessionEnd = () => {
+    // Handle session end (already voted, timeout, etc.)
     logout();
     setStep('verify');
-    alert('Your session has expired. Please verify your token again.');
   };
 
   // Show loading while checking session
@@ -73,6 +76,14 @@ const VotingPage = () => {
           voterData={voterData}
           onVoteComplete={handleVoteComplete}
           sessionTime={sessionTime}
+          onSessionEnd={handleSessionEnd}
+        />
+      )}
+
+      {step === 'success' && voteResult && (
+        <VoteSuccess
+          result={voteResult}
+          onClose={handleSuccessClose}
         />
       )}
     </>
