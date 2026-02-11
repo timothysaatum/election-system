@@ -148,11 +148,11 @@ async def verify_voting_id(
     # The electorate object will be converted in the response model
     
     return TokenVerificationResponse(
+        success=True,              # ✓ Added required field
         access_token=access_token,
         token_type="bearer",
-        valid=True,
+        expires_in=1800,           # ✓ Added required field (30 minutes)
         electorate=electorate,
-        message="Token verified successfully",
     )
 
 

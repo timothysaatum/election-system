@@ -149,11 +149,11 @@ const PollingAgentDashboard = ({ agent, onLogout }) => {
   useEffect(() => {
     if (!autoRefresh) return;
 
-    console.log("Setting up auto-refresh interval (30 seconds)");
+    console.log("Setting up auto-refresh interval (5 seconds)");
     const interval = setInterval(() => {
       console.log("Auto-refreshing results...");
       loadResults();
-    }, 30000);
+    }, 5000);
 
     return () => {
       console.log("Cleaning up auto-refresh interval");
@@ -194,7 +194,7 @@ const PollingAgentDashboard = ({ agent, onLogout }) => {
                   onChange={(e) => setAutoRefresh(e.target.checked)}
                   className="h-4 w-4 text-green-600 rounded focus:ring-2 focus:ring-green-500"
                 />
-                Auto-refresh (30s)
+                Auto-refresh (5s)
               </label>
               <button
                 onClick={loadResults}
@@ -294,7 +294,7 @@ const PollingAgentDashboard = ({ agent, onLogout }) => {
         <div className="mt-8 text-center">
           <p className="text-sm text-gray-500">
             Last updated: {lastUpdate.toLocaleTimeString()}
-            {autoRefresh && " • Auto-refreshing every 30 seconds"}
+            {autoRefresh && " • Auto-refreshing every 5 seconds"}
           </p>
         </div>
       </main>

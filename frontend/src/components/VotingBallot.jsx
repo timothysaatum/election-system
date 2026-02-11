@@ -2,40 +2,45 @@ import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import { votingApi } from "../services/votingApi";
 import LoadingSpinner from "./shared/LoadingSpinner";
 import { Shield, ChevronRight, ChevronLeft, CheckCircle2, Clock, Info, AlertCircle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || "/api";
 
 /**
- * Official Candidate Card - Optimized for maximum visibility
+ * Official Candidate Card - Optimized for Face Visibility
  */
 const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect }) => {
   return (
     <button
       onClick={() => onSelect(portfolio.id, candidate.id)}
-      className={`relative group flex flex-col items-center p-8 rounded-2xl border-2 transition-all duration-200 ${isSelected
+      className={`relative group flex flex-col items-center p-6 rounded-2xl border-2 transition-all duration-200 ${isSelected
         ? "border-blue-700 bg-blue-50/50 ring-1 ring-blue-700 shadow-md"
         : "border-slate-200 bg-white hover:border-blue-400 hover:shadow-sm"
         } w-full max-w-md`}
     >
       {isSelected && (
-        <div className="absolute top-4 right-4 text-blue-700 animate-in zoom-in">
+        <div className="absolute top-4 right-4 z-10 text-blue-700 animate-in zoom-in">
           <CheckCircle2 className="w-10 h-10 fill-blue-700 text-white" />
         </div>
       )}
 
-      {/* Large Square Image - Centered */}
-      <div className={`w-full aspect-square rounded-xl overflow-hidden mb-6 border border-slate-200 bg-slate-50 transition-transform duration-300 group-hover:scale-[1.02] flex items-center justify-center shadow-inner`}>
+      {/* Portrait Container - Optimized for head visibility */}
+      <div className="w-full aspect-[4/5] rounded-xl overflow-hidden mb-6 border border-slate-200 bg-slate-50 transition-transform duration-300 group-hover:scale-[1.02] flex items-center justify-center shadow-inner">
         <img
-          src={candidate.picture_url ? `${API_BASE_URL.replace("/api", "")}${candidate.picture_url}` : "https://via.placeholder.com/800x800?text=No+Photo"}
+          src={candidate.picture_url ? `${API_BASE_URL.replace("/api", "")}${candidate.picture_url}` : "https://via.placeholder.com/800x1000?text=No+Photo"}
           alt={candidate.name}
-          className="w-full h-full object-cover"
+          /* object-top ensures the head is not cut off in portrait shots */
+          className="w-full h-full object-cover object-top"
           loading="eager"
+          onError={(e) => {
+            e.target.src = "https://via.placeholder.com/800x1000?text=Photo+Unavailable";
+          }}
         />
       </div>
 
       <div className="text-center w-full">
-        <h3 className="text-3xl font-black text-slate-900 mb-1 leading-tight">{candidate.name}</h3>
-        <p className="text-slate-500 font-bold text-sm uppercase tracking-widest">
+        <h3 className="text-2xl font-black text-slate-900 mb-1 leading-tight">{candidate.name}</h3>
+        <p className="text-slate-500 font-bold text-xs uppercase tracking-widest">
           {candidate.party || "Independent Candidate"}
         </p>
       </div>
@@ -47,6 +52,8 @@ const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect }) => {
  * Already Voted Screen Component
  */
 const AlreadyVotedScreen = ({ votedAt, studentId }) => {
+  const navigate = useNavigate();
+
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
       <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-12 text-center border-2 border-amber-200">
@@ -59,8 +66,7 @@ const AlreadyVotedScreen = ({ votedAt, studentId }) => {
         </h1>
 
         <p className="text-xl text-slate-600 mb-8 leading-relaxed">
-          Our records show that you have already cast your vote in this election.
-          Multiple voting is not allowed to ensure fairness and integrity.
+          You have already cast your vote in this election.
         </p>
 
         <div className="bg-slate-50 rounded-2xl p-6 mb-8">
@@ -89,10 +95,10 @@ const AlreadyVotedScreen = ({ votedAt, studentId }) => {
             Thank you for participating in this election. Your vote has been securely recorded.
           </p>
           <button
-            onClick={() => window.location.href = '/'}
+            onClick={() => navigate('/vote')}
             className="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-all"
           >
-            Return to Home
+            Return to Token Verification
           </button>
         </div>
       </div>
@@ -101,6 +107,7 @@ const AlreadyVotedScreen = ({ votedAt, studentId }) => {
 };
 
 const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
+  const navigate = useNavigate();
   const [candidates, setCandidates] = useState([]);
   const [selectedVotes, setSelectedVotes] = useState({});
   const [currentStep, setCurrentStep] = useState(0);
@@ -118,10 +125,8 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
         const data = await votingApi.getBallot();
         setCandidates(data);
       } catch (err) {
-        // Check if error is because user already voted
         if (err.message && err.message.includes("already voted")) {
           setAlreadyVoted(true);
-          // Try to parse additional info from error
           try {
             const errorData = JSON.parse(err.message);
             setVotedInfo(errorData);
@@ -187,9 +192,14 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
     setSubmitting(true);
     try {
       const result = await votingApi.castVote(finalVotes);
-      onVoteComplete(result);
+      // Navigate to token verification page after successful vote
+      navigate('/auth/verify-id', {
+        state: {
+          voteSuccess: true,
+          message: 'Your vote has been successfully submitted!'
+        }
+      });
     } catch (err) {
-      // Check if error is because user already voted
       if (err.message && err.message.includes("already voted")) {
         setAlreadyVoted(true);
         setShowConfirmModal(false);
@@ -206,7 +216,6 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
     }
   };
 
-  // Show already voted screen if user has already voted
   if (alreadyVoted) {
     return (
       <AlreadyVotedScreen
@@ -242,7 +251,6 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans text-slate-900">
-      {/* Official Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 px-6 py-4 shadow-sm">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -286,11 +294,15 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
             {currentPortfolio.candidates.length === 1 ? (
               <div className="flex justify-center">
                 <div className="bg-white border border-slate-200 rounded-[3rem] p-12 md:p-16 max-w-4xl w-full shadow-xl flex flex-col items-center">
-                  <div className="w-full max-w-md aspect-square rounded-[2rem] overflow-hidden border-4 border-slate-50 shadow-2xl mb-10 ring-1 ring-slate-200">
+                  {/* Portrait aspect for single candidates */}
+                  <div className="w-full max-w-sm aspect-[4/5] rounded-[2rem] overflow-hidden border-4 border-slate-50 shadow-2xl mb-10 ring-1 ring-slate-200 bg-slate-100">
                     <img
-                      src={currentPortfolio.candidates[0].picture_url ? `${API_BASE_URL.replace("/api", "")}${currentPortfolio.candidates[0].picture_url}` : "https://via.placeholder.com/800x800"}
+                      src={currentPortfolio.candidates[0].picture_url ? `${API_BASE_URL.replace("/api", "")}${currentPortfolio.candidates[0].picture_url}` : "https://via.placeholder.com/800x1000"}
                       alt={currentPortfolio.candidates[0].name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover object-top"
+                      onError={(e) => {
+                        e.target.src = "https://via.placeholder.com/800x1000?text=Photo+Unavailable";
+                      }}
                     />
                   </div>
                   <div className="text-center">
@@ -310,7 +322,7 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-12 justify-items-center">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 justify-items-center">
                 {currentPortfolio.candidates.map(cand => (
                   <CandidateCard key={cand.id} candidate={cand} portfolio={currentPortfolio} isSelected={currentSelection === cand.id} onSelect={handleSelection} />
                 ))}
@@ -351,7 +363,6 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
         </div>
       </footer>
 
-      {/* Confirmation Modal - No PIN Required */}
       {showConfirmModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-[100] animate-in fade-in duration-300">
           <div className="bg-white rounded-3xl p-10 max-w-lg w-full shadow-2xl border border-slate-100">
@@ -363,7 +374,6 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime }) => {
               You are about to submit your ballot. Please review your selections carefully before confirming.
             </p>
 
-            {/* Show vote summary */}
             <div className="bg-slate-50 rounded-2xl p-6 mb-8 max-h-64 overflow-y-auto">
               <h4 className="font-bold text-slate-700 mb-4 text-sm uppercase tracking-wider">Your Selections:</h4>
               <div className="space-y-3">

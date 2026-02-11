@@ -1,14 +1,13 @@
 import { useState, useEffect } from 'react';
 import TokenVerification from '../components/TokenVerification';
 import VotingBallot from '../components/VotingBallot';
-import VoteSuccess from '../components/VoteSuccess';
 import { useVotingSession } from '../hooks/useVotingSession';
 import LoadingSpinner from '../components/shared/LoadingSpinner';
 
 const VotingPage = () => {
   const [step, setStep] = useState('verify'); // verify, vote, success
   const [voteResult, setVoteResult] = useState(null);
-  
+
   const {
     isAuthenticated,
     voterData,
@@ -39,19 +38,19 @@ const VotingPage = () => {
 
   const handleVoteComplete = (result) => {
     setVoteResult(result);
-    setStep('success');
     logout(); // Clear session after successful vote
+
+    // Show success message
+    alert('Your vote has been submitted successfully! Thank you for voting.');
+
+    // Reset to verification page
+    setStep('verify');
   };
 
   const handleSessionTimeout = () => {
     logout();
     setStep('verify');
     alert('Your session has expired. Please verify your token again.');
-  };
-
-  const handleClose = () => {
-    logout();
-    window.location.href = '/'; // Redirect to home or thank you page
   };
 
   // Show loading while checking session
@@ -68,17 +67,13 @@ const VotingPage = () => {
       {step === 'verify' && (
         <TokenVerification onVerified={handleVerified} />
       )}
-      
+
       {step === 'vote' && voterData && (
         <VotingBallot
           voterData={voterData}
           onVoteComplete={handleVoteComplete}
           sessionTime={sessionTime}
         />
-      )}
-      
-      {step === 'success' && voteResult && (
-        <VoteSuccess result={voteResult} onClose={handleClose} />
       )}
     </>
   );

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from uuid import UUID
+import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from app.models.electorates import Electorate
@@ -144,12 +145,28 @@ async def update_electorate(
     return result.scalar_one()
 
 async def delete_electorate(db: AsyncSession, electorate_id: str) -> bool:
-    result = await db.execute(
-        delete(Electorate).where(Electorate.id == electorate_id)
-    )
-    await db.commit()
+    """
+    Deletes an electorate. 
+    Associated Votes and VotingSessions will be automatically deleted by 
+    the database via ON DELETE CASCADE constraints.
+    """
+    try:
+        # We ensure uuid format if the input is a string
+        if isinstance(electorate_id, str):
+            electorate_uuid = uuid.UUID(electorate_id)
+        else:
+            electorate_uuid = electorate_id
 
-    return result.rowcount > 0
+        result = await db.execute(
+            delete(Electorate).where(Electorate.id == electorate_uuid)
+        )
+        
+        await db.commit()
+        return result.rowcount > 0
+        
+    except Exception as e:
+        await db.rollback()
+        raise e
 
 
 async def bulk_create_electorates(

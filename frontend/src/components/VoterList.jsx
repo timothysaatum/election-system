@@ -10,6 +10,12 @@ import {
   X
 } from "lucide-react";
 
+// Helper function to format student ID for display (convert hyphens to slashes)
+const formatStudentId = (studentId) => {
+  if (!studentId) return studentId;
+  return studentId.replace(/-/g, '/');
+};
+
 export const VoterList = ({
   electorates,
   loading,
@@ -37,9 +43,10 @@ export const VoterList = ({
     if (!electorates || electorates.length === 0) return [];
 
     return electorates.filter((electorate) => {
-      // Search filter
+      // Search filter - search in formatted (slash) version
+      const formattedId = formatStudentId(electorate.student_id);
       const matchesSearch =
-        electorate.student_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        formattedId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         electorate.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         electorate.program?.toLowerCase().includes(searchTerm.toLowerCase());
 
@@ -290,7 +297,7 @@ export const VoterList = ({
                       {globalIndex}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {electorate.student_id}
+                      {formatStudentId(electorate.student_id)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {electorate.name || "N/A"}
@@ -404,8 +411,8 @@ export const VoterList = ({
                     key={pageNum}
                     onClick={() => goToPage(pageNum)}
                     className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${currentPage === pageNum
-                        ? "bg-indigo-600 text-white"
-                        : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+                      ? "bg-indigo-600 text-white"
+                      : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
                       }`}
                   >
                     {pageNum}

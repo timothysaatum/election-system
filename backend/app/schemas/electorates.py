@@ -1,6 +1,6 @@
 """
-Complete Electorate Schemas with Student ID Conversion
-Includes ALL schemas from original + student ID conversion
+Complete Electorate Schemas with Enhanced Student ID Conversion
+Includes ALL schemas from original + improved student ID conversion with validation
 """
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
@@ -10,17 +10,125 @@ import uuid
 
 
 class StudentIDConverter:
-    """Handle student ID conversion between formats"""
+    """
+    Handle student ID conversion between formats with proper validation
+    
+    Storage format: MLS-0201-19 (hyphens)
+    Display format: MLS/0201/19 (slashes)
+    """
     
     @staticmethod
     def to_storage(student_id: str) -> str:
-        """Convert slash to hyphen for storage: MLS/0201/19 → MLS-0201-19"""
+        """
+        Convert slash to hyphen for storage: MLS/0201/19 → MLS-0201-19
+        Handles None, empty strings, and already converted IDs
+        
+        Args:
+            student_id: Student ID in any format
+            
+        Returns:
+            Student ID in storage format (hyphenated)
+        """
+        if not student_id:
+            return student_id
+        
+        # Strip whitespace and convert to uppercase for consistency
+        student_id = student_id.strip().upper()
+        
+        # Convert slashes to hyphens
         return student_id.replace("/", "-")
     
     @staticmethod
     def to_display(student_id: str) -> str:
-        """Convert hyphen to slash for display: MLS-0201-19 → MLS/0201/19"""
+        """
+        Convert hyphen to slash for display: MLS-0201-19 → MLS/0201/19
+        Handles None, empty strings, and already converted IDs
+        
+        Args:
+            student_id: Student ID in storage format
+            
+        Returns:
+            Student ID in display format (slashes)
+        """
+        if not student_id:
+            return student_id
+        
+        # Strip whitespace
+        student_id = student_id.strip()
+        
+        # Convert hyphens to slashes
         return student_id.replace("-", "/")
+    
+    @staticmethod
+    def normalize(student_id: str) -> str:
+        """
+        Normalize student ID to storage format regardless of input format
+        Handles both slash and hyphen formats, ensures uppercase
+        
+        Args:
+            student_id: Student ID in any format
+            
+        Returns:
+            Normalized student ID in storage format
+        """
+        if not student_id:
+            return student_id
+        
+        # Strip whitespace and convert to uppercase
+        student_id = student_id.strip().upper()
+        
+        # Ensure it's in hyphen format
+        return student_id.replace("/", "-")
+    
+    @staticmethod
+    def validate(student_id: str) -> bool:
+        """
+        Validate student ID format (either slash or hyphen format)
+        Expected patterns: XXX/XXXX/XX or XXX-XXXX-XX
+        
+        Args:
+            student_id: Student ID to validate
+            
+        Returns:
+            True if valid format, False otherwise
+        """
+        if not student_id:
+            return False
+        
+        student_id = student_id.strip()
+        
+        # Check for valid separators
+        has_slashes = "/" in student_id
+        has_hyphens = "-" in student_id
+        
+        # Should have either slashes or hyphens, but not both
+        if has_slashes and has_hyphens:
+            return False
+        
+        if not (has_slashes or has_hyphens):
+            return False
+        
+        # Split by the separator and check parts
+        separator = "/" if has_slashes else "-"
+        parts = student_id.split(separator)
+        
+        # Should have exactly 3 parts
+        if len(parts) != 3:
+            return False
+        
+        # First part: 3 letters (program code)
+        if not (parts[0].isalpha() and len(parts[0]) == 3):
+            return False
+        
+        # Second part: 4 digits (student number)
+        if not (parts[1].isdigit() and len(parts[1]) == 4):
+            return False
+        
+        # Third part: 2 digits (year)
+        if not (parts[2].isdigit() and len(parts[2]) == 2):
+            return False
+        
+        return True
 
 
 class ElectorateBase(BaseModel):
@@ -36,10 +144,17 @@ class ElectorateBase(BaseModel):
         """Convert student ID from slash to hyphen format for storage"""
         if not v:
             raise ValueError("student_id is required")
-        # Convert slashes to hyphens
-        v_converted = v.replace("/", "-")
+        
+        # Normalize and validate
+        v_converted = StudentIDConverter.normalize(v)
+        
         if len(v_converted) < 5:
             raise ValueError("student_id must be at least 5 characters")
+        
+        # Optional: Add validation check
+        # if not StudentIDConverter.validate(v_converted):
+        #     raise ValueError("Invalid student_id format. Expected format: XXX/XXXX/XX or XXX-XXXX-XX")
+        
         return v_converted
 
     @field_validator("year_level")
@@ -87,7 +202,7 @@ class ElectorateUpdate(BaseModel):
     def convert_student_id_for_storage(cls, v):
         """Convert student ID from slash to hyphen format for storage"""
         if v is not None:
-            return v.replace("/", "-")
+            return StudentIDConverter.normalize(v)
         return v
 
     @field_validator("phone_number")
@@ -292,18 +407,16 @@ class LinkRegistrationResponse(BaseModel):
 
 # Token Verification Schemas
 class TokenVerificationRequest(BaseModel):
-    token: str  # Now accepts 4-character tokens
+    token: str
     current_location: Optional[LocationData] = None
 
 
 class TokenVerificationResponse(BaseModel):
+    success: bool
     access_token: str
     token_type: str = "bearer"
-    valid: bool
-    electorate: Optional[ElectorateOut] = None
-    message: str
-    device_mismatch: bool = False
-    location_mismatch: bool = False
+    expires_in: int
+    electorate: ElectorateOut
 
 
 # Token Generation Schemas

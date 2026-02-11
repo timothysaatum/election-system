@@ -50,14 +50,30 @@ class Electorate(Base):
     
     # Relationships
     voting_tokens: Mapped[list["VotingToken"]] = relationship(
-        "VotingToken", back_populates="electorate"
+        "VotingToken", 
+        back_populates="electorate",
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+    votes: Mapped[list["Vote"]] = relationship(
+        "Vote", 
+        back_populates="electorate", 
+        cascade="all, delete-orphan",
+        passive_deletes=True # vital for high-performance DB-side deletion
     )
     device_registrations: Mapped[list["DeviceRegistration"]] = relationship(
-        "DeviceRegistration", back_populates="electorate"
+        "DeviceRegistration", 
+        back_populates="electorate",
+        cascade="all, delete-orphan",
+        passive_deletes=True
     )
     voting_sessions: Mapped[list["VotingSession"]] = relationship(
-        "VotingSession", back_populates="electorate"
+        "VotingSession",
+        back_populates="electorate",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
+
 
     @property
     def voting_token(self) -> Optional[str]:
@@ -136,7 +152,9 @@ class VotingToken(Base):
         primary_key=True, default=uuid.uuid4, index=True
     )
     electorate_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("students.id"), nullable=False, index=True
+        ForeignKey("students.id", ondelete="CASCADE"), 
+        nullable=False, 
+        index=True
     )
     token_hash: Mapped[str] = mapped_column(
         String(1550), nullable=False, unique=True, index=True
@@ -195,14 +213,15 @@ class DeviceRegistration(Base):
         ForeignKey("registration_links.id"), nullable=True, index=True
     )
     electorate_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("students.id"), nullable=True, index=True
+        ForeignKey("students.id", ondelete="CASCADE"), 
+        nullable=True, 
+        index=True
     )
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     biometric_data_hash: Mapped[str | None] = mapped_column(String(1550), nullable=True)
     device_password_hash: Mapped[str | None] = mapped_column(String(1550), nullable=True)
-    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    ban_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    ban_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verification_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
@@ -255,8 +274,11 @@ class VotingSession(Base):
         primary_key=True, default=uuid.uuid4, index=True
     )
     electorate_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("students.id"), nullable=False, index=True
+        ForeignKey("students.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True
     )
+
     session_token: Mapped[str] = mapped_column(
         String(1550), nullable=False, unique=True, index=True
     )
@@ -376,7 +398,9 @@ class Vote(Base):
         primary_key=True, default=uuid.uuid4, index=True
     )
     electorate_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("students.id"), nullable=False, index=True
+        ForeignKey("students.id", ondelete="CASCADE"), 
+        nullable=False, 
+        index=True
     )
     portfolio_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("portfolios.id"), nullable=False, index=True
@@ -401,7 +425,10 @@ class Vote(Base):
     )
 
     # Relationships
-    electorate: Mapped["Electorate"] = relationship("Electorate")
+    electorate: Mapped["Electorate"] = relationship(
+        "Electorate", 
+        back_populates="votes"
+    )
     portfolio: Mapped["Portfolio"] = relationship("Portfolio", back_populates="votes")
     candidate: Mapped["Candidate"] = relationship("Candidate", back_populates="votes")
     voting_session: Mapped[Optional["VotingSession"]] = relationship("VotingSession")

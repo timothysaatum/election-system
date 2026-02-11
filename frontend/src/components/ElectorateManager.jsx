@@ -1,10 +1,16 @@
 import { useState, useMemo, useRef } from 'react';
-import { Plus, Edit2, Trash2, Upload, Download, FileSpreadsheet, Search, Printer } from 'lucide-react';
+import { Plus, Edit2, Trash2, Upload, Download, FileSpreadsheet, Search, Printer, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { api } from '../services/api';
 import { ConfirmModal, AlertModal } from './Modal';
 import { ToastContainer } from './Toast';
 import { useModal } from '../hooks/useModal';
 import { useToast } from '../hooks/useToast';
+
+// Helper function to format student ID for display (convert hyphens to slashes)
+const formatStudentId = (studentId) => {
+  if (!studentId) return studentId;
+  return studentId.replace(/-/g, '/');
+};
 
 export const ElectorateManager = ({ electorates, onUpdate }) => {
   const [showForm, setShowForm] = useState(false);
@@ -13,6 +19,11 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
   const [uploadResult, setUploadResult] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterProgram, setFilterProgram] = useState('');
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   const [formData, setFormData] = useState({
     student_id: '',
     program: '',
@@ -28,11 +39,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
 
   const handlePrint = () => {
     const printWindow = window.open('', '', 'height=600,width=900');
-    const filteredData = electorates.filter(e =>
-      (e.student_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        e.name?.toLowerCase().includes(searchTerm.toLowerCase())) &&
-      (!filterProgram || e.program === filterProgram)
-    );
+    const filteredData = filteredElectorates;
 
     const htmlContent = `
       <html>
@@ -43,7 +50,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
             h1 { text-align: center; color: #333; margin-bottom: 20px; }
             .summary { margin-bottom: 30px; padding: 15px; background-color: #f5f5f5; border-radius: 5px; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+            th, td { padding: 12px; text-left; border-bottom: 1px solid #ddd; }
             th { background-color: #0066cc; color: white; font-weight: bold; }
             tr:nth-child(even) { background-color: #f9f9f9; }
             tr:hover { background-color: #f0f0f0; }
@@ -84,7 +91,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
             <tbody>
               ${filteredData.map(e => `
                 <tr>
-                  <td>${e.student_id || '-'}</td>
+                  <td>${formatStudentId(e.student_id) || '-'}</td>
                   <td>${e.name || '-'}</td>
                   <td>${e.program || '-'}</td>
                   <td>${e.year_level || '-'}</td>
@@ -102,7 +109,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
 
     if (printWindow) {
       printWindow.document.open();
-      printWindow.document.innerHTML = htmlContent;
+      printWindow.document.write(htmlContent);
       printWindow.document.close();
       setTimeout(() => printWindow.print(), 250);
     }
@@ -130,10 +137,72 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
 
   const filteredElectorates = useMemo(() =>
     electorates.filter(e =>
-      (e.student_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (formatStudentId(e.student_id).toLowerCase().includes(searchTerm.toLowerCase()) ||
         e.name?.toLowerCase().includes(searchTerm.toLowerCase())) &&
       (!filterProgram || e.program === filterProgram)
     ), [electorates, searchTerm, filterProgram]);
+
+  // Pagination calculations
+  const totalItems = filteredElectorates.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage);
+
+  const paginatedElectorates = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    return filteredElectorates.slice(startIndex, endIndex);
+  }, [filteredElectorates, currentPage, itemsPerPage]);
+
+  const showingFrom = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
+  const showingTo = Math.min(currentPage * itemsPerPage, totalItems);
+
+  // Reset to page 1 when filters change
+  const handleSearchChange = (value) => {
+    setSearchTerm(value);
+    setCurrentPage(1);
+  };
+
+  const handleFilterChange = (value) => {
+    setFilterProgram(value);
+    setCurrentPage(1);
+  };
+
+  const handleItemsPerPageChange = (e) => {
+    const newItemsPerPage = parseInt(e.target.value);
+    setItemsPerPage(newItemsPerPage);
+    setCurrentPage(1);
+  };
+
+  // Page navigation
+  const goToFirstPage = () => setCurrentPage(1);
+  const goToLastPage = () => setCurrentPage(totalPages);
+  const goToNextPage = () => setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+  const goToPreviousPage = () => setCurrentPage((prev) => Math.max(prev - 1, 1));
+  const goToPage = (page) => setCurrentPage(page);
+
+  // Generate page numbers
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisible = 5;
+
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i);
+      }
+    } else {
+      let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+      let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+
+      if (endPage - startPage < maxVisible - 1) {
+        startPage = Math.max(1, endPage - maxVisible + 1);
+      }
+
+      for (let i = startPage; i <= endPage; i++) {
+        pages.push(i);
+      }
+    }
+
+    return pages;
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -184,7 +253,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
 
   const handleEdit = (electorate) => {
     setFormData({
-      student_id: electorate.student_id,
+      student_id: formatStudentId(electorate.student_id),
       program: electorate.program || '',
       year_level: electorate.year_level || 100,
       phone_number: electorate.phone_number || '',
@@ -277,7 +346,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
   const downloadTemplate = () => {
     // Create CSV template
     const headers = ['student_id', 'program', 'year_level', 'phone_number', 'email'];
-    const sample = ['2024001', 'Computer Science', '300', '0244123456', 'student@example.com'];
+    const sample = ['MLS/0201/19', 'Computer Science', '300', '0244123456', 'student@example.com'];
 
     const csvContent = [
       headers.join(','),
@@ -399,13 +468,13 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
               type="text"
               placeholder="Search by Student ID or Name..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
           <select
             value={filterProgram}
-            onChange={(e) => setFilterProgram(e.target.value)}
+            onChange={(e) => handleFilterChange(e.target.value)}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             <option value="">All Programs</option>
@@ -447,6 +516,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
                   value={formData.student_id}
                   onChange={(e) => setFormData({ ...formData, student_id: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  placeholder="MLS/0201/19"
                   required
                 />
               </div>
@@ -529,7 +599,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredElectorates.length === 0 && (
+              {paginatedElectorates.length === 0 && (
                 <tr>
                   <td colSpan="6" className="text-center py-12 text-gray-500">
                     <FileSpreadsheet className="h-12 w-12 mx-auto mb-4 text-gray-400" />
@@ -537,10 +607,10 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
                   </td>
                 </tr>
               )}
-              {filteredElectorates.map((electorate) => (
+              {paginatedElectorates.map((electorate) => (
                 <tr key={electorate.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {electorate.student_id}
+                    {formatStudentId(electorate.student_id)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {electorate.program || 'N/A'}
@@ -575,6 +645,104 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Footer */}
+        {filteredElectorates.length > 0 && (
+          <div className="mt-4 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-lg">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              {/* Showing info & Items per page */}
+              <div className="flex items-center gap-4">
+                <div className="text-sm text-gray-600">
+                  Showing <span className="font-semibold text-gray-900">{showingFrom}</span> to{" "}
+                  <span className="font-semibold text-gray-900">{showingTo}</span> of{" "}
+                  <span className="font-semibold text-gray-900">{totalItems}</span> voters
+                </div>
+
+                {/* Items per page selector */}
+                <div className="flex items-center gap-2">
+                  <label htmlFor="itemsPerPage" className="text-sm text-gray-600">
+                    Show:
+                  </label>
+                  <select
+                    id="itemsPerPage"
+                    value={itemsPerPage}
+                    onChange={handleItemsPerPageChange}
+                    className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Pagination controls */}
+              <div className="flex items-center gap-2">
+                {/* First page */}
+                <button
+                  onClick={goToFirstPage}
+                  disabled={currentPage === 1}
+                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  title="First page"
+                >
+                  <ChevronsLeft className="h-4 w-4 text-gray-600" />
+                </button>
+
+                {/* Previous page */}
+                <button
+                  onClick={goToPreviousPage}
+                  disabled={currentPage === 1}
+                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  title="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4 text-gray-600" />
+                </button>
+
+                {/* Page numbers */}
+                <div className="hidden sm:flex items-center gap-1">
+                  {getPageNumbers().map((pageNum) => (
+                    <button
+                      key={pageNum}
+                      onClick={() => goToPage(pageNum)}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${currentPage === pageNum
+                          ? "bg-blue-600 text-white"
+                          : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+                        }`}
+                    >
+                      {pageNum}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Mobile page indicator */}
+                <div className="sm:hidden px-3 py-1.5 text-sm text-gray-700">
+                  Page {currentPage} of {totalPages}
+                </div>
+
+                {/* Next page */}
+                <button
+                  onClick={goToNextPage}
+                  disabled={currentPage === totalPages}
+                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  title="Next page"
+                >
+                  <ChevronRight className="h-4 w-4 text-gray-600" />
+                </button>
+
+                {/* Last page */}
+                <button
+                  onClick={goToLastPage}
+                  disabled={currentPage === totalPages}
+                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  title="Last page"
+                >
+                  <ChevronsRight className="h-4 w-4 text-gray-600" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {electorates.length === 0 && (
           <div className="text-center py-12 text-gray-500">
