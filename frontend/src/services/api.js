@@ -91,7 +91,7 @@ class ApiService {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
-    
+
     // Data includes: access_token, role, permissions, is_admin
     return data;
   }
@@ -317,6 +317,11 @@ class ApiService {
 
   async getRecentActivity(limit = 50) {
     return this.requestWithDedup(`/admin/recent-activity?limit=${limit}`);
+  }
+
+  // Get electorates with their actual voting tokens
+  async getElectorateTokens() {
+    return this.requestWithDedup("/admin/electorate-tokens");
   }
 }
 

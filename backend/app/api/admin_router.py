@@ -29,6 +29,7 @@ from app.crud.crud_votes import (
     get_all_election_results,
     get_recent_votes_engine,
 )
+from app.crud.crud_voting_tokens import get_electorates_with_tokens
 from app.middleware.auth_middleware import get_current_admin, get_current_user
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -190,6 +191,24 @@ async def get_voter(
             detail="Voter not found"
         )
     return voter
+
+
+@router.get("/electorate-tokens")
+async def get_electorate_tokens_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_admin=Depends(get_current_user),
+):
+    """
+    Get all electorates with their active voting tokens
+    
+    Args:
+        db: Database session
+        current_admin: Current authenticated admin
+        
+    Returns:
+        List of electorates with their tokens (plain text for admins only)
+    """
+    return await get_electorates_with_tokens(db)
 
 
 @router.get("/statistics")

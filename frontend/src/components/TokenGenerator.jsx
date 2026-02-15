@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Send, Key, RefreshCw, CheckCircle, AlertCircle, Mail, MessageSquare } from 'lucide-react';
+import { Send, Key, RefreshCw, CheckCircle, AlertCircle, Mail, MessageSquare, Eye } from 'lucide-react';
 import { api } from '../services/api';
 import { ConfirmModal, AlertModal } from './Modal';
 import { ToastContainer } from './Toast';
+import { TokensModal } from './TokensModal';
 import { useModal } from '../hooks/useModal';
 import { useToast } from '../hooks/useToast';
 
@@ -10,6 +11,7 @@ export const TokenGenerator = ({ electorates, onUpdate }) => {
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState(null);
   const [selectedVoters, setSelectedVoters] = useState([]);
+  const [showTokensModal, setShowTokensModal] = useState(false);
   const [options, setOptions] = useState({
     election_name: 'SRC Election 2024',
     send_notifications: true,
@@ -112,6 +114,17 @@ export const TokenGenerator = ({ electorates, onUpdate }) => {
     }
   };
 
+  const handleViewTokens = () => {
+    const electoratesWithTokens = electorates.filter(e => e.voting_token === 'GENERATED');
+
+    if (electoratesWithTokens.length === 0) {
+      toast.showInfo('No tokens have been generated yet');
+      return;
+    }
+
+    setShowTokensModal(true);
+  };
+
   const toggleVoterSelection = (voterId) => {
     setSelectedVoters(prev =>
       prev.includes(voterId)
@@ -127,6 +140,9 @@ export const TokenGenerator = ({ electorates, onUpdate }) => {
       setSelectedVoters([]);
     }
   };
+
+  // Count voters with tokens
+  const votersWithTokens = electorates.filter(e => e.voting_token === 'GENERATED').length;
 
   return (
     <>
@@ -163,16 +179,35 @@ export const TokenGenerator = ({ electorates, onUpdate }) => {
       <ConfirmModal {...confirmModal} onConfirm={confirmModal.handleConfirm} onClose={confirmModal.handleClose} {...confirmModal.modalProps} />
       <AlertModal {...alertModal} onClose={alertModal.handleClose} {...alertModal.modalProps} />
 
+      {showTokensModal && (
+        <TokensModal
+          electorates={electorates.filter(e => e.voting_token === 'GENERATED')}
+          onClose={() => setShowTokensModal(false)}
+        />
+      )}
+
       <div className="bg-gradient-to-br from-white via-indigo-50/30 to-white rounded-2xl shadow-xl p-6 border border-slate-200">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-lg">
-            <Key className="h-6 w-6 text-white" />
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-lg">
+              <Key className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-3xl font-bold text-slate-900">Token Generation</h2>
+              <p className="text-sm text-slate-600">Generate and distribute voting tokens to electorates</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-3xl font-bold text-slate-900">Token Generation</h2>
-            <p className="text-sm text-slate-600">Generate and distribute voting tokens to electorates</p>
-          </div>
+
+          {votersWithTokens > 0 && (
+            <button
+              onClick={handleViewTokens}
+              className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-purple-700 text-white px-5 py-3 rounded-xl hover:from-purple-700 hover:to-purple-800 transition-all font-semibold shadow-lg hover:shadow-xl"
+            >
+              <Eye className="h-5 w-5" />
+              View Tokens ({votersWithTokens})
+            </button>
+          )}
         </div>
 
         {/* Options Card */}
@@ -196,7 +231,7 @@ export const TokenGenerator = ({ electorates, onUpdate }) => {
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
               <label className="flex items-center p-4 bg-white rounded-xl border-2 border-slate-200 hover:border-indigo-300 transition-all cursor-pointer">
                 <input
                   type="checkbox"
@@ -209,13 +244,15 @@ export const TokenGenerator = ({ electorates, onUpdate }) => {
                   <span className="text-sm font-semibold text-slate-700">Send Notifications</span>
                 </div>
               </label>
+            </div>
 
-              <label className="flex items-center p-4 bg-white rounded-xl border-2 border-slate-200 hover:border-indigo-300 transition-all cursor-pointer">
+            <div>
+              <label className="flex items-center p-4 bg-white rounded-xl border-2 border-slate-200 hover:border-green-300 transition-all cursor-pointer">
                 <input
                   type="checkbox"
                   checked={options.exclude_voted}
                   onChange={(e) => setOptions({ ...options, exclude_voted: e.target.checked })}
-                  className="h-5 w-5 text-indigo-600 rounded border-slate-300 focus:ring-2 focus:ring-indigo-500"
+                  className="h-5 w-5 text-green-600 rounded border-slate-300 focus:ring-2 focus:ring-green-500"
                 />
                 <div className="ml-3 flex items-center gap-2">
                   <CheckCircle className="h-4 w-4 text-green-600" />
@@ -357,6 +394,9 @@ export const TokenGenerator = ({ electorates, onUpdate }) => {
                     Phone
                   </th>
                   <th className="px-5 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-5 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -385,10 +425,28 @@ export const TokenGenerator = ({ electorates, onUpdate }) => {
                       {voter.phone_number || 'N/A'}
                     </td>
                     <td className="px-5 py-4">
+                      {voter.has_voted ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-lg text-xs font-semibold">
+                          <CheckCircle className="h-3 w-3" />
+                          Voted
+                        </span>
+                      ) : voter.voting_token === 'GENERATED' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-semibold">
+                          <Key className="h-3 w-3" />
+                          Token Ready
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-700 rounded-lg text-xs font-semibold">
+                          No Token
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-5 py-4">
                       <button
                         onClick={() => handleRegenerateToken(voter.id)}
-                        className="flex items-center gap-1.5 text-indigo-600 hover:text-indigo-800 text-sm font-medium hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-all"
-                        title="Regenerate Token"
+                        disabled={voter.has_voted}
+                        className="flex items-center gap-1.5 text-indigo-600 hover:text-indigo-800 text-sm font-medium hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={voter.has_voted ? "Cannot regenerate - already voted" : "Regenerate Token"}
                       >
                         <RefreshCw className="h-4 w-4" />
                         Regenerate

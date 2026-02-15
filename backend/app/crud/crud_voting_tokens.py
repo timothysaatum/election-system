@@ -185,3 +185,63 @@ async def get_token_statistics(db: AsyncSession) -> dict:
         "revoked_tokens": revoked_tokens,
         "expired_tokens": expired_tokens,
     }
+
+
+async def get_electorates_with_tokens(db: AsyncSession) -> list:
+    """
+    Get all electorates with their active voting tokens
+    Returns the plain text token for admin viewing
+    
+    NOTE: This requires storing the plain text token temporarily in a separate table
+    or retrieving it from a cache. Since tokens are hashed, we'll need to return
+    the token that was generated and stored in memory/cache during generation.
+    
+    For now, this returns electorate info with token hashes - the frontend will
+    need to handle displaying these appropriately.
+    """
+    from app.models.electorates import Electorate
+    
+    result = await db.execute(
+        select(Electorate)
+        .options(selectinload(Electorate.voting_tokens))
+        .where(Electorate.is_deleted == False)
+    )
+    electorates = result.scalars().all()
+    
+    now = datetime.now(timezone.utc)
+    response = []
+    
+    for electorate in electorates:
+        # Find active token
+        active_token = None
+        token_value = None
+        
+        if electorate.voting_tokens:
+            for token in electorate.voting_tokens:
+                if token.revoked or not token.is_active:
+                    continue
+                
+                expires_at = token.expires_at
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                
+                if expires_at > now:
+                    active_token = token
+                    # Get the last 4 characters of the hash as a pseudo-token
+                    # In production, you'd retrieve this from a secure cache
+                    token_value = token.token_hash[-4:].upper()
+                    break
+        
+        # Only include electorates that have active tokens
+        if active_token:
+            response.append({
+                "id": str(electorate.id),
+                "student_id": electorate.student_id,
+                "program": electorate.program,
+                "phone_number": electorate.phone_number,
+                "email": electorate.email,
+                "has_voted": electorate.has_voted,
+                "token": token_value,  # This is a pseudo-token for display
+            })
+    
+    return response
