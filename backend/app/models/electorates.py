@@ -6,13 +6,12 @@ from sqlalchemy import (
     func,
     Text,
     ForeignKey,
-    JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 from datetime import datetime, timezone
 import uuid
-from typing import Optional, Dict, Any
+from typing import Optional
 
 
 class Electorate(Base):
@@ -30,9 +29,6 @@ class Electorate(Base):
     phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     voting_pin_hash: Mapped[str] = mapped_column(String(1550), nullable=False)
-    device_fingerprint: Mapped[str | None] = mapped_column(
-        String(1550), nullable=True, index=True
-    )
     has_voted: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, index=True
     )
@@ -60,12 +56,6 @@ class Electorate(Base):
         back_populates="electorate", 
         cascade="all, delete-orphan",
         passive_deletes=True # vital for high-performance DB-side deletion
-    )
-    device_registrations: Mapped[list["DeviceRegistration"]] = relationship(
-        "DeviceRegistration", 
-        back_populates="electorate",
-        cascade="all, delete-orphan",
-        passive_deletes=True
     )
     voting_sessions: Mapped[list["VotingSession"]] = relationship(
         "VotingSession",
@@ -159,15 +149,6 @@ class VotingToken(Base):
     token_hash: Mapped[str] = mapped_column(
         String(1550), nullable=False, unique=True, index=True
     )
-    device_fingerprint: Mapped[str] = mapped_column(
-        String(1550), nullable=False, index=True
-    )
-    device_info: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
-    location_data: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=True)
-    ip_address: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
-    user_agent: Mapped[str] = mapped_column(Text, nullable=False)
-    biometric_data_hash: Mapped[str | None] = mapped_column(String(1550), nullable=True)
-    device_password_hash: Mapped[str | None] = mapped_column(String(1550), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     usage_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(
@@ -194,78 +175,6 @@ class VotingToken(Base):
     def update_usage_count(self):
         self.usage_count += 1
         
-
-
-class DeviceRegistration(Base):
-    __tablename__ = "device_registrations"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        primary_key=True, default=uuid.uuid4, index=True
-    )
-    device_fingerprint: Mapped[str] = mapped_column(
-        String(550), nullable=False, unique=True, index=True
-    )
-    ip_address: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
-    location_data: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=True)
-    device_info: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
-    user_agent: Mapped[str] = mapped_column(Text, nullable=False)
-    registration_link_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("registration_links.id"), nullable=True, index=True
-    )
-    electorate_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("students.id", ondelete="CASCADE"), 
-        nullable=True, 
-        index=True
-    )
-    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    biometric_data_hash: Mapped[str | None] = mapped_column(String(1550), nullable=True)
-    device_password_hash: Mapped[str | None] = mapped_column(String(1550), nullable=True)
-    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    verification_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
-    )
-    last_attempt_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-
-    # Relationships
-    registration_link: Mapped["RegistrationLink"] = relationship(
-        "RegistrationLink", back_populates="devices"
-    )
-    electorate: Mapped[Optional["Electorate"]] = relationship(
-        "Electorate", back_populates="device_registrations"
-    )
-
-
-class RegistrationLink(Base):
-    __tablename__ = "registration_links"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        primary_key=True, default=uuid.uuid4, index=True
-    )
-    link_token: Mapped[str] = mapped_column(
-        String(1550), nullable=False, unique=True, index=True
-    )
-    max_devices: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    current_device_count: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
-    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now(), nullable=True
-    )
-
-    # Relationships
-    devices: Mapped[list["DeviceRegistration"]] = relationship(
-        "DeviceRegistration", back_populates="registration_link"
-    )
-
 
 class VotingSession(Base):
     __tablename__ = "voting_sessions"
@@ -412,9 +321,6 @@ class Vote(Base):
         ForeignKey("voting_sessions.id"), nullable=True, index=True
     )
     ip_address: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
-    device_fingerprint: Mapped[str] = mapped_column(
-        String(1550), nullable=False, index=True
-    )
     user_agent: Mapped[str] = mapped_column(Text, nullable=False)
     voted_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False

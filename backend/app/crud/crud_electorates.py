@@ -151,7 +151,7 @@ async def delete_electorate(db: AsyncSession, electorate_id: str) -> bool:
     the database via ON DELETE CASCADE constraints.
     """
     try:
-        # We ensure uuid format if the input is a string
+        # Ensure uuid format if the input is a string
         if isinstance(electorate_id, str):
             electorate_uuid = uuid.UUID(electorate_id)
         else:
@@ -178,7 +178,7 @@ async def bulk_create_electorates(
     # ----------------------------
     unique_map = {}
     for e in electorate_list:
-        unique_map[e.student_id] = e   # keeps last occurrence
+        unique_map[e.student_id] = e
 
     electorate_list = list(unique_map.values())
 

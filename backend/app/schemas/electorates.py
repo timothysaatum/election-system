@@ -152,8 +152,8 @@ class ElectorateBase(BaseModel):
             raise ValueError("student_id must be at least 5 characters")
         
         # Optional: Add validation check
-        # if not StudentIDConverter.validate(v_converted):
-        #     raise ValueError("Invalid student_id format. Expected format: XXX/XXXX/XX or XXX-XXXX-XX")
+        if not StudentIDConverter.validate(v_converted):
+            raise ValueError("Invalid student_id format. Expected format: XXX/XXXX/XX or XXX-XXXX-XX")
         
         return v_converted
 
@@ -251,87 +251,14 @@ class ElectorateOut(ElectorateBase):
         return data
 
 
-# Device Registration Schemas (kept for compatibility)
-class LocationData(BaseModel):
-    latitude: float
-    longitude: float
-    accuracy: Optional[float] = None
-
-
-class DeviceInfo(BaseModel):
-    user_agent: str
-    browser: str
-    os: str
-    device_type: str
-    fingerprint: str
-    security_fingerprint: str
-    risk_score: int
-    risk_level: str
-    risk_factors: list[str]
-
-
-class DeviceRegistrationRequest(BaseModel):
-    full_name: str
-    biometric_data: Optional[str] = None
-    device_password: Optional[str] = None
-    location: Optional[LocationData] = None
-
-
-class DeviceRegistrationResponse(BaseModel):
-    id: uuid.UUID
-    device_fingerprint: str
-    registration_successful: bool
-    voting_token: Optional[str] = None
-    message: str
-
-
-class DeviceRegistrationOut(BaseModel):
-    id: uuid.UUID
-    device_fingerprint: str
-    full_name: str
-    ip_address: str
-    is_banned: bool
-    ban_reason: Optional[str] = None
-    created_at: datetime
-    last_attempt_at: Optional[datetime] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-# Registration Link Schemas
-class RegistrationLinkCreate(BaseModel):
-    max_devices: int = 50
-    description: Optional[str] = None
-
-
-class RegistrationLinkOut(BaseModel):
-    id: uuid.UUID
-    link_token: str
-    max_devices: int
-    current_device_count: int
-    is_active: bool
-    expires_at: datetime
-    created_by: str
-    description: Optional[str] = None
-    created_at: Optional[datetime] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 # Voting Token Schemas
 class VotingTokenCreate(BaseModel):
     electorate_id: uuid.UUID
-    device_fingerprint: str
-    device_info: DeviceInfo
-    location_data: Optional[LocationData] = None
-    biometric_data: Optional[str] = None
-    device_password: Optional[str] = None
 
 
 class VotingTokenOut(BaseModel):
     id: uuid.UUID
     electorate_id: uuid.UUID
-    device_fingerprint: str
     is_active: bool
     usage_count: int
     last_used_at: Optional[datetime] = None
@@ -344,16 +271,13 @@ class VotingTokenOut(BaseModel):
 
 class VotingTokenVerification(BaseModel):
     token: str
-    device_fingerprint: str
-    current_location: Optional[LocationData] = None
-
+    
 
 # Voting Session Schemas
 class VotingSessionOut(BaseModel):
     id: uuid.UUID
     electorate_id: uuid.UUID
     session_token: str
-    device_fingerprint: str
     ip_address: str
     login_method: str
     is_valid: bool
@@ -371,7 +295,6 @@ class VoterSession(BaseModel):
     id: uuid.UUID
     electorate_id: uuid.UUID
     session_token: str
-    device_fingerprint: str
     expires_at: datetime
     is_valid: bool
 
@@ -392,9 +315,6 @@ class VoterAuthSchema(BaseModel):
 class LinkRegistrationRequest(BaseModel):
     link_token: str
     full_name: str
-    biometric_data: Optional[str] = None
-    device_password: Optional[str] = None
-    location: Optional[LocationData] = None
 
 
 class LinkRegistrationResponse(BaseModel):
@@ -408,7 +328,6 @@ class LinkRegistrationResponse(BaseModel):
 # Token Verification Schemas
 class TokenVerificationRequest(BaseModel):
     token: str
-    current_location: Optional[LocationData] = None
 
 
 class TokenVerificationResponse(BaseModel):
@@ -671,13 +590,6 @@ __all__ = [
     "ElectorateCreate",
     "ElectorateUpdate",
     "ElectorateOut",
-    "LocationData",
-    "DeviceInfo",
-    "DeviceRegistrationRequest",
-    "DeviceRegistrationResponse",
-    "DeviceRegistrationOut",
-    "RegistrationLinkCreate",
-    "RegistrationLinkOut",
     "VotingTokenCreate",
     "VotingTokenOut",
     "VotingTokenVerification",

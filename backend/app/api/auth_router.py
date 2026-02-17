@@ -1,5 +1,5 @@
 """
-Offline Authentication Router
+Authentication Router
 4-CHARACTER TOKENS + Student ID Conversion (slash/hyphen)
 """
 
