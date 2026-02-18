@@ -28,6 +28,7 @@ async def create_vote(
         portfolio_id=vote_data.portfolio_id,
         candidate_id=vote_data.candidate_id,
         voting_session_id=voting_session_id,
+        vote_type=vote_data.vote_type if hasattr(vote_data, 'vote_type') else "endorsed",
         ip_address=ip_address,
         user_agent=user_agent,
         voted_at=datetime.now(timezone.utc)

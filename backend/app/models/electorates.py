@@ -320,6 +320,9 @@ class Vote(Base):
     voting_session_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("voting_sessions.id"), nullable=True, index=True
     )
+    vote_type: Mapped[str] = mapped_column(
+        String(50), default="endorsed", nullable=False, index=True
+    )
     ip_address: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
     user_agent: Mapped[str] = mapped_column(Text, nullable=False)
     voted_at: Mapped[datetime] = mapped_column(

@@ -467,6 +467,7 @@ class CandidateOut(CandidateBase):
 class VoteCreate(BaseModel):
     portfolio_id: uuid.UUID
     candidate_id: uuid.UUID
+    vote_type: str = "endorsed"  # "endorsed" or "rejected"
 
 
 class VotingCreation(BaseModel):
@@ -492,6 +493,7 @@ class VoteOut(BaseModel):
     id: uuid.UUID
     electorate_id: uuid.UUID
     voting_session_id: Optional[uuid.UUID] = None
+    vote_type: str = "endorsed"
     voted_at: datetime
     is_valid: bool
     created_at: datetime

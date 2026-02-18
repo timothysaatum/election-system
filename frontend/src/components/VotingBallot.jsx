@@ -182,8 +182,25 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
 
   const handleFinalSubmit = async () => {
     const finalVotes = Object.entries(selectedVotes)
-      .filter(([_, value]) => value !== "reject")
-      .map(([portfolio_id, candidate_id]) => ({ portfolio_id, candidate_id }));
+      .map(([portfolio_id, candidate_id]) => {
+        // Handle rejected votes: candidate_id will be "reject"
+        if (candidate_id === "reject") {
+          // Find the candidate in this portfolio to record the rejection
+          const portfolio = portfolios.find(p => p.id === portfolio_id);
+          const candidateId = portfolio.candidates[0].id;
+          return {
+            portfolio_id,
+            candidate_id: candidateId,
+            vote_type: "rejected"
+          };
+        }
+        // Handle endorsed votes
+        return {
+          portfolio_id,
+          candidate_id,
+          vote_type: "endorsed"
+        };
+      });
 
     setSubmitting(true);
     try {
