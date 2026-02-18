@@ -128,7 +128,7 @@ async def bulk_upload_electorates(
             student_id=student_id,
             program=str(row.get("program")) if pd.notna(row.get("program")) else None,
             year_level=(
-                int(row.get("year_level")) if pd.notna(row.get("year_level")) else None
+                int(row.get("year_level")) if row.get("year_level") is not None and pd.notna(row.get("year_level")) else None
             ),
             phone_number=(
                 str(row.get("phone_number"))

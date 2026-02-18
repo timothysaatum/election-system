@@ -11,7 +11,7 @@ from app.core.config import Settings
 from app.core.database import Base
 
 # Import all models to ensure they are registered with Base.metadata
-from app.models.electorates import Electorate, VotingToken, DeviceRegistration, RegistrationLink, VotingSession
+from app.models.electorates import Electorate, VotingToken, VotingSession
 
 settings = Settings()
 

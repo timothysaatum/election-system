@@ -20,7 +20,6 @@ async def create_vote(
     electorate_id: UUID,
     voting_session_id: Optional[UUID],
     ip_address: str,
-    device_fingerprint: str,
     user_agent: str
 ) -> Vote:
     """Create a new vote"""
@@ -30,7 +29,6 @@ async def create_vote(
         candidate_id=vote_data.candidate_id,
         voting_session_id=voting_session_id,
         ip_address=ip_address,
-        device_fingerprint=device_fingerprint,
         user_agent=user_agent,
         voted_at=datetime.now(timezone.utc)
     )

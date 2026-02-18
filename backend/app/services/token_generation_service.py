@@ -4,7 +4,7 @@ Offline Token Generation Service
 Student ID conversion: slash to hyphen for storage
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime, timezone, timedelta
 from uuid import UUID
 import logging
@@ -137,10 +137,6 @@ class BulkTokenGenerator:
                 voting_token = VotingToken(
                     electorate_id=electorate.id,
                     token_hash=self._hash_token(token),
-                    device_fingerprint="offline",
-                    device_info={},
-                    ip_address="127.0.0.1",
-                    user_agent="Offline",
                     expires_at=expires,
                     is_active=True,
                     revoked=False,

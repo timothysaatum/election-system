@@ -163,7 +163,6 @@ async def cast_vote(
                 electorate_id=electorate.id,
                 voting_session_id=session_id,
                 ip_address="127.0.0.1",
-                device_fingerprint="offline",
                 user_agent="Offline",
             )
             votes.append(vote)

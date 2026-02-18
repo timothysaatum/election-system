@@ -152,8 +152,8 @@ class ElectorateBase(BaseModel):
             raise ValueError("student_id must be at least 5 characters")
         
         # Optional: Add validation check
-        if not StudentIDConverter.validate(v_converted):
-            raise ValueError("Invalid student_id format. Expected format: XXX/XXXX/XX or XXX-XXXX-XX")
+        # if not StudentIDConverter.validate(v_converted):
+        #     raise ValueError("Invalid student_id format. Expected format: XXX/XXXX/XX or XXX-XXXX-XX")
         
         return v_converted
 
@@ -311,18 +311,18 @@ class VoterAuthSchema(BaseModel):
     student_id: str
 
 
-# Link-based Authentication Schemas
-class LinkRegistrationRequest(BaseModel):
-    link_token: str
-    full_name: str
+# # Link-based Authentication Schemas
+# class LinkRegistrationRequest(BaseModel):
+#     link_token: str
+#     full_name: str
 
 
-class LinkRegistrationResponse(BaseModel):
-    success: bool
-    voting_token: Optional[str] = None
-    message: str
-    device_banned: bool = False
-    ban_reason: Optional[str] = None
+# class LinkRegistrationResponse(BaseModel):
+#     success: bool
+#     voting_token: Optional[str] = None
+#     message: str
+#     device_banned: bool = False
+#     ban_reason: Optional[str] = None
 
 
 # Token Verification Schemas
