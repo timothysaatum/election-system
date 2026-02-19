@@ -311,23 +311,10 @@ class VoterAuthSchema(BaseModel):
     student_id: str
 
 
-# # Link-based Authentication Schemas
-# class LinkRegistrationRequest(BaseModel):
-#     link_token: str
-#     full_name: str
-
-
-# class LinkRegistrationResponse(BaseModel):
-#     success: bool
-#     voting_token: Optional[str] = None
-#     message: str
-#     device_banned: bool = False
-#     ban_reason: Optional[str] = None
-
-
 # Token Verification Schemas
 class TokenVerificationRequest(BaseModel):
     token: str
+    student_id: Optional[str] = None
 
 
 class TokenVerificationResponse(BaseModel):
@@ -518,6 +505,7 @@ class ElectionResults(BaseModel):
     portfolio_id: uuid.UUID
     portfolio_name: str
     total_votes: int
+    total_rejected: int = 0
     candidates: list[dict]
     winner: Optional[dict] = None
 

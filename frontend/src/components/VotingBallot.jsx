@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import { votingApi } from "../services/votingApi";
 import LoadingSpinner from "./shared/LoadingSpinner";
-import { Shield, ChevronRight, ChevronLeft, CheckCircle2, Clock, Info, AlertCircle } from "lucide-react";
+import { Shield, ChevronRight, ChevronLeft, CheckCircle2, Clock, AlertCircle } from "lucide-react";
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || "/api";
 
@@ -160,6 +160,16 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
   const currentSelection = selectedVotes[currentPortfolio?.id];
   const hasSelected = !!currentSelection;
 
+  const handleSkip = useCallback(() => {
+    // Remove any selection for this portfolio to indicate it was skipped
+    setSelectedVotes(prev => {
+      const updated = { ...prev };
+      delete updated[currentPortfolio.id];
+      return updated;
+    });
+    nextStep();
+  }, [currentPortfolio?.id]);
+
   const handleSelection = useCallback((portfolioId, value) => {
     setSelectedVotes(prev => ({ ...prev, [portfolioId]: value }));
   }, []);
@@ -291,10 +301,11 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
         <div className="mb-12 pb-8 border-b-2 border-slate-200/60">
           <div className="flex items-center gap-4 mb-3">
             <span className="bg-blue-600 text-white px-4 py-1 rounded-md font-black text-sm uppercase">Section {currentStep + 1}</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Optional</span>
           </div>
           <h2 className="text-5xl font-black tracking-tight text-slate-900 mb-4">{currentPortfolio?.name}</h2>
           <p className="text-slate-500 text-xl max-w-3xl font-medium leading-relaxed">
-            {currentPortfolio?.description || "Select candidate for this office to cast vote"}
+            {currentPortfolio?.description || "Select a candidate to vote for this office, or skip if you prefer not to vote for this position."}
           </p>
         </div>
 
@@ -351,16 +362,19 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
             <ChevronLeft className="w-5 h-5" /> PREVIOUS
           </button>
 
-          <div className="flex items-center gap-8">
+          <div className="flex items-center gap-4">
             {!hasSelected && (
-              <div className="hidden lg:flex items-center gap-2 text-amber-600 font-black text-xs uppercase tracking-tighter animate-pulse">
-                <Info className="w-4 h-4" /> Selection Required
-              </div>
+              <button
+                onClick={handleSkip}
+                className="px-8 py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all text-slate-500 hover:bg-slate-100 active:scale-95"
+              >
+                SKIP OFFICE
+              </button>
             )}
             <button
               onClick={nextStep}
-              disabled={!hasSelected || submitting}
-              className={`flex items-center gap-3 px-12 py-4 rounded-xl font-black text-lg uppercase tracking-widest transition-all shadow-xl ${hasSelected
+              disabled={submitting}
+              className={`flex items-center gap-3 px-12 py-4 rounded-xl font-black text-lg uppercase tracking-widest transition-all shadow-xl ${!submitting
                 ? "bg-slate-900 text-white hover:bg-blue-800 hover:translate-y-[-2px] active:translate-y-0"
                 : "bg-slate-200 text-slate-400 cursor-not-allowed"
                 }`}
@@ -389,10 +403,12 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
                 {portfolios.map(portfolio => (
                   <div key={portfolio.id} className="flex justify-between items-center text-sm">
                     <span className="font-semibold text-slate-600">{portfolio.name}:</span>
-                    <span className="font-bold text-slate-900">
+                    <span className={`font-bold ${selectedVotes[portfolio.id] ? "text-slate-900" : "text-slate-400 italic"}`}>
                       {selectedVotes[portfolio.id] === "reject"
                         ? "REJECTED"
-                        : portfolio.candidates.find(c => c.id === selectedVotes[portfolio.id])?.name || "Not selected"}
+                        : selectedVotes[portfolio.id]
+                          ? portfolio.candidates.find(c => c.id === selectedVotes[portfolio.id])?.name
+                          : "Not selected"}
                     </span>
                   </div>
                 ))}

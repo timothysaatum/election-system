@@ -5,7 +5,7 @@ CRUD operations for Vote management
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import func, and_, desc
+from sqlalchemy import func, and_, desc, case
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime, timezone
@@ -175,13 +175,15 @@ async def get_election_results(db: AsyncSession, portfolio_id: UUID) -> Dict[str
     if not portfolio:
         return None
     
-    # Get vote counts for each candidate
+    # Get vote counts for each candidate (both endorsed and rejected)
     vote_counts_result = await db.execute(
         select(
             Candidate.id,
             Candidate.name,
             Candidate.picture_url,
-            func.count(Vote.id).label('vote_count')
+            func.sum(case((Vote.vote_type == 'endorsed', 1), else_=0)).label('endorsed_votes'),
+            func.sum(case((Vote.vote_type == 'rejected', 1), else_=0)).label('rejected_votes'),
+            func.count(Vote.id).label('total_votes')
         )
         .join(Vote, Candidate.id == Vote.candidate_id)
         .where(
@@ -191,24 +193,32 @@ async def get_election_results(db: AsyncSession, portfolio_id: UUID) -> Dict[str
             )
         )
         .group_by(Candidate.id, Candidate.name, Candidate.picture_url)
-        .order_by(desc(func.count(Vote.id)))
+        .order_by(desc(func.sum(case((Vote.vote_type == 'endorsed', 1), else_=0))))
     )
     
     candidates = []
     total_votes = 0
+    total_rejected = 0
     winner = None
     
     for row in vote_counts_result:
+        endorsed_votes = int(row.endorsed_votes) if row.endorsed_votes else 0
+        rejected_votes = int(row.rejected_votes) if row.rejected_votes else 0
+        total_candidate_votes = endorsed_votes + rejected_votes
+        
         candidate_data = {
             'id': str(row.id),
             'name': row.name,
             'picture_url': row.picture_url,
-            'vote_count': row.vote_count
+            'vote_count': endorsed_votes,
+            'rejected_count': rejected_votes,
+            'total_votes': total_candidate_votes
         }
         candidates.append(candidate_data)
-        total_votes += row.vote_count
+        total_votes += endorsed_votes
+        total_rejected += rejected_votes
         
-        # First candidate (highest votes) is the winner
+        # First candidate (highest endorsed votes) is the winner
         if winner is None:
             winner = candidate_data
     
@@ -216,6 +226,7 @@ async def get_election_results(db: AsyncSession, portfolio_id: UUID) -> Dict[str
         'portfolio_id': str(portfolio_id),
         'portfolio_name': portfolio.name,
         'total_votes': total_votes,
+        'total_rejected': total_rejected,
         'candidates': candidates,
         'winner': winner
     }

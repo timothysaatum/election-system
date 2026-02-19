@@ -22,10 +22,10 @@ from app.schemas.electorates import (
     PasswordHashResponse,
     TokenVerificationRequest,
     TokenVerificationResponse,
+    StudentIDConverter,
 )
 from app.crud.crud_voting_tokens import get_voting_token_by_hash, update_token_usage
 from app.utils.security import TokenManager, verify_password
-from app.services.token_generation_service import StudentIDConverter
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -112,6 +112,18 @@ async def verify_voting_id(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Voter not found"
         )
+    
+    # Verify student ID if provided
+    if verification_data.student_id:
+        # Normalize both student IDs for comparison
+        provided_student_id = StudentIDConverter.normalize(verification_data.student_id)
+        electorate_student_id = StudentIDConverter.normalize(electorate.student_id)
+        
+        if provided_student_id != electorate_student_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Student ID does not match token"
+            )
     
     # Update token usage
     await update_token_usage(db, voting_token.id)

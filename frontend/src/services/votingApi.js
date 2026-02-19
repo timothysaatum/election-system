@@ -238,24 +238,28 @@ class VotingApiService {
   /**
    * Verify voting token
    */
-  async verifyToken(token, options = {}) {
+  async verifyToken(token, studentId = null, options = {}) {
     const cleanToken = token
       .replace(/[\s\-]/g, "")
       .replace(/[^A-Za-z0-9]/g, "")
       .toUpperCase();
-
 
     if (cleanToken.length !== 4) {
       throw new Error("Token must be exactly 4 characters");
     }
 
     console.log("[VotingAPI] Verifying token...");
+    const responseBody = {
+      token: cleanToken,
+    };
+
+    if (studentId) {
+      responseBody.student_id = studentId;
+    }
+
     const data = await this.request("/auth/verify-id", {
       method: "POST",
-      body: JSON.stringify({
-        token: cleanToken,
-        current_location: options.location || null,
-      }),
+      body: JSON.stringify(responseBody),
     });
 
     // Store token with expiry tracking

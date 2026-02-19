@@ -1,0 +1,5 @@
+
+> kratos-ui@0.1.0 build
+> craco build
+
+sh: 1: craco: not found

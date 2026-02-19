@@ -44,12 +44,13 @@ export const ResultsView = ({ results }) => {
             <div class="portfolio-section">
               <div class="portfolio-title">${idx + 1}. ${result.portfolio_name}</div>
               <p><strong>Total Votes:</strong> ${result.total_votes}</p>
+              <p><strong>Total Rejected:</strong> ${result.total_rejected}</p>
               
               ${result.winner ? `
                 <div class="winner-section">
                   <div class="winner-badge">🏆 WINNER</div>
                   <p><strong>${result.winner.name}</strong></p>
-                  <p>Votes: ${result.winner.vote_count} (${result.total_votes > 0 ? ((result.winner.vote_count / result.total_votes) * 100).toFixed(1) : 0}%)</p>
+                  <p>Endorsed: ${result.winner.vote_count} | Rejected: ${result.winner.rejected_count || 0}</p>
                 </div>
               ` : ''}
               
@@ -58,7 +59,8 @@ export const ResultsView = ({ results }) => {
                   <tr>
                     <th>Rank</th>
                     <th>Candidate Name</th>
-                    <th>Votes</th>
+                    <th>Endorsed</th>
+                    <th>Rejected</th>
                     <th>Percentage</th>
                   </tr>
                 </thead>
@@ -67,7 +69,8 @@ export const ResultsView = ({ results }) => {
                     <tr>
                       <td>#${i + 1}</td>
                       <td>${c.name}</td>
-                      <td>${c.vote_count}</td>
+                      <td>${c.vote_count || 0}</td>
+                      <td>${c.rejected_count || 0}</td>
                       <td class="vote-percentage">${result.total_votes > 0 ? ((c.vote_count / result.total_votes) * 100).toFixed(1) : 0}%</td>
                     </tr>
                   `).join('')}
@@ -299,14 +302,17 @@ export const ResultsView = ({ results }) => {
                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">All Candidates</p>
                 {result.candidates.map((candidate, index) => {
                   const isWinner = result.winner && candidate.id === result.winner.id;
-                  const percentage = result.total_votes > 0 ? ((candidate.vote_count / result.total_votes) * 100).toFixed(1) : 0;
+                  const endorsedVotes = candidate.vote_count || 0;
+                  const rejectedVotes = candidate.rejected_count || 0;
+                  const portfolioTotal = result.total_votes || 0;
+                  const percentage = portfolioTotal > 0 ? ((endorsedVotes / portfolioTotal) * 100).toFixed(1) : 0;
 
                   return (
                     <div
                       key={candidate.id}
                       className={`flex items-center justify-between p-3.5 rounded-xl transition-all ${isWinner
-                          ? 'bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-200'
-                          : 'bg-slate-50 hover:bg-slate-100 border-2 border-transparent'
+                        ? 'bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-200'
+                        : 'bg-slate-50 hover:bg-slate-100 border-2 border-transparent'
                         }`}
                     >
                       <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -336,11 +342,21 @@ export const ResultsView = ({ results }) => {
                         </span>
                       </div>
                       <div className="text-right flex-shrink-0 ml-3">
-                        <p className={`text-lg font-bold metric-number ${isWinner ? 'text-amber-700' : 'text-slate-900'
-                          }`}>
-                          {candidate.vote_count}
-                        </p>
-                        <p className="text-xs text-slate-500 metric-number">{percentage}%</p>
+                        <div className="flex gap-4 items-end justify-end">
+                          <div>
+                            <p className={`text-lg font-bold metric-number ${isWinner ? 'text-green-700' : 'text-green-600'
+                              }`}>
+                              {endorsedVotes}
+                            </p>
+                            <p className="text-xs text-green-600 metric-number font-medium">endorsed</p>
+                          </div>
+                          <div>
+                            <p className="text-lg font-bold metric-number text-red-600">
+                              {rejectedVotes}
+                            </p>
+                            <p className="text-xs text-red-600 metric-number font-medium">rejected</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );

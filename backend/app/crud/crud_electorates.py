@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from app.models.electorates import Electorate
-from app.schemas.electorates import ElectorateCreate, ElectorateUpdate
+from app.schemas.electorates import ElectorateCreate, ElectorateUpdate, StudentIDConverter
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 import hashlib
@@ -64,7 +64,7 @@ async def get_electorates(
         
         response.append({
             "id": str(electorate.id),
-            "student_id": electorate.student_id,
+            "student_id": StudentIDConverter.to_display(electorate.student_id),
             "program": electorate.program,
             "year_level": electorate.year_level,
             "phone_number": electorate.phone_number,

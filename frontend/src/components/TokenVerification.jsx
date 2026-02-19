@@ -15,8 +15,8 @@ const TokenVerification = ({ onVerified }) => {
     setLoading(true);
 
     try {
-      // Notice: studentId is not passed here, so it remains unused logic-wise
-      const data = await votingApi.verifyToken(token);
+      // Pass both token and studentId for verification
+      const data = await votingApi.verifyToken(token, studentId);
       onVerified(data);
     } catch (err) {
       setError(err.message || 'Failed to verify token. Please try again.');

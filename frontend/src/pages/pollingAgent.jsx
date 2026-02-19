@@ -9,15 +9,46 @@ import { useToast } from "../hooks/useToast";
 
 const SimplePortfolioCard = ({ portfolio }) => {
   const totalVotes = portfolio.total_votes || 0;
+  const totalRejected = portfolio.total_rejected || 0;
+  const candidates = portfolio.candidates || [];
 
   return (
     <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
-      <h3 className="text-lg font-semibold text-gray-900 mb-2">
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">
         {portfolio.portfolio_name || portfolio.name}
       </h3>
-      <p className="text-3xl font-bold text-green-600">
-        {totalVotes} votes
-      </p>
+
+      <div className="mb-4 grid grid-cols-2 gap-4">
+        <div>
+          <p className="text-sm text-gray-600">Endorsed</p>
+          <p className="text-2xl font-bold text-green-600">{totalVotes}</p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-600">Rejected</p>
+          <p className="text-2xl font-bold text-red-600">{totalRejected}</p>
+        </div>
+      </div>
+
+      {candidates.length > 0 && (
+        <div className="border-t pt-4 mt-4">
+          <p className="text-sm font-semibold text-gray-700 mb-3">Candidates</p>
+          <div className="space-y-2">
+            {candidates.map((candidate) => (
+              <div key={candidate.id} className="text-sm">
+                <p className="font-medium text-gray-800">{candidate.name}</p>
+                <div className="flex gap-4 text-xs">
+                  <span className="text-green-600">
+                    ✓ {candidate.vote_count || 0} endorsed
+                  </span>
+                  <span className="text-red-600">
+                    ✗ {candidate.rejected_count || 0} rejected
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

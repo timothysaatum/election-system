@@ -134,7 +134,7 @@ async def generate_tokens_for_portfolio(
     return result
 
 
-@router.get("/voters")
+@router.get("/voters", response_model=List[ElectorateOut])
 async def list_voters(
     skip: int = 0,
     limit: int = 100,
