@@ -29,7 +29,7 @@ const SimplePortfolioCard = ({ portfolio }) => {
         </div>
       </div>
 
-      {candidates.length > 0 && (
+      {/* {candidates.length > 0 && (
         <div className="border-t pt-4 mt-4">
           <p className="text-sm font-semibold text-gray-700 mb-3">Candidates</p>
           <div className="space-y-2">
@@ -48,7 +48,7 @@ const SimplePortfolioCard = ({ portfolio }) => {
             ))}
           </div>
         </div>
-      )}
+      )} */}
     </div>
   );
 };

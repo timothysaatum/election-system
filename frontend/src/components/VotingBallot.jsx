@@ -39,9 +39,9 @@ const CandidateCard = memo(({ candidate, isSelected, portfolio, onSelect }) => {
 
       <div className="text-center w-full">
         <h3 className="text-2xl font-black text-slate-900 mb-1 leading-tight">{candidate.name}</h3>
-        <p className="text-slate-500 font-bold text-xs uppercase tracking-widest">
+        {/* <p className="text-slate-500 font-bold text-xs uppercase tracking-widest">
           {candidate.party || "Independent Candidate"}
-        </p>
+        </p> */}
       </div>
     </button>
   );
@@ -327,7 +327,7 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
                   </div>
                   <div className="text-center">
                     <h3 className="text-5xl font-black mb-2 text-slate-900">{currentPortfolio.candidates[0].name}</h3>
-                    <p className="text-blue-600 font-bold mb-10 tracking-[0.3em] uppercase text-lg">{currentPortfolio.candidates[0].party || "Independent"}</p>
+                    {/* <p className="text-blue-600 font-bold mb-10 tracking-[0.3em] uppercase text-lg">{currentPortfolio.candidates[0].party || "Independent"}</p> */}
                     <div className="flex flex-wrap justify-center gap-6">
                       <button
                         onClick={() => handleSelection(currentPortfolio.id, currentPortfolio.candidates[0].id)}
