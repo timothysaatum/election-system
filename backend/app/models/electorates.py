@@ -24,6 +24,7 @@ class Electorate(Base):
     student_id: Mapped[str] = mapped_column(
         String(50), unique=True, nullable=False, index=True
     )
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     program: Mapped[str] = mapped_column(String(100), nullable=True)
     year_level: Mapped[int] = mapped_column(Integer, nullable=True)
     phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)

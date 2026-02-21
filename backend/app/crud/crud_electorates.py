@@ -65,6 +65,7 @@ async def get_electorates(
         response.append({
             "id": str(electorate.id),
             "student_id": StudentIDConverter.to_display(electorate.student_id),
+            "name": electorate.name,
             "program": electorate.program,
             "year_level": electorate.year_level,
             "phone_number": electorate.phone_number,

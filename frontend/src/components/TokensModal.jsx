@@ -45,6 +45,7 @@ export const TokensModal = ({ electorates, onClose }) => {
     const search = searchTerm.toLowerCase();
     return (
       e.student_id?.toLowerCase().includes(search) ||
+      e.name?.toLowerCase().includes(search) ||
       e.program?.toLowerCase().includes(search) ||
       e.token?.toLowerCase().includes(search)
     );
@@ -145,11 +146,17 @@ export const TokensModal = ({ electorates, onClose }) => {
                     className="bg-gradient-to-r from-gray-50 to-indigo-50/30 rounded-xl p-5 border-2 border-gray-200 hover:border-indigo-300 transition-all"
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="flex-1 grid grid-cols-1 md:grid-cols-5 gap-4">
                         <div>
                           <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Student ID</p>
                           <p className="font-bold text-gray-900">
                             {electorate.student_id}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1">Name</p>
+                          <p className="font-medium text-gray-900">
+                            {electorate.name || "N/A"}
                           </p>
                         </div>
                         <div>

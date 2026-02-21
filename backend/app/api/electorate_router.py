@@ -126,6 +126,7 @@ async def bulk_upload_electorates(
 
         electorate = ElectorateCreate(
             student_id=student_id,
+            name=str(row.get("name")) if pd.notna(row.get("name")) and row.get("name") else None,
             program=str(row.get("program")) if pd.notna(row.get("program")) else None,
             year_level=(
                 int(row.get("year_level")) if row.get("year_level") is not None and pd.notna(row.get("year_level")) else None

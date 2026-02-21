@@ -26,6 +26,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
 
   const [formData, setFormData] = useState({
     student_id: '',
+    name: '',
     program: '',
     year_level: 100,
     phone_number: '',
@@ -209,6 +210,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
     try {
       const payload = {
         student_id: formData.student_id,
+        name: formData.name || null,
         program: formData.program,
         year_level: Number(formData.year_level),
       };
@@ -244,6 +246,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
     setEditingId(null);
     setFormData({
       student_id: '',
+      name: '',
       program: '',
       year_level: 100,
       phone_number: '',
@@ -254,6 +257,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
   const handleEdit = (electorate) => {
     setFormData({
       student_id: formatStudentId(electorate.student_id),
+      name: electorate.name || '',
       program: electorate.program || '',
       year_level: electorate.year_level || 100,
       phone_number: electorate.phone_number || '',
@@ -345,14 +349,14 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
 
   const downloadTemplate = () => {
     // Create CSV template
-    const headers = ['student_id', 'program', 'year_level', 'phone_number', 'email'];
-    const sample = ['MLS/0201/19', 'Computer Science', '300', '0244123456', 'student@example.com'];
+    const headers = ['student_id', 'name', 'program', 'year_level', 'phone_number', 'email'];
+    const sample = ['MLS/0201/19', 'John Doe', 'Computer Science', '300', '0244123456', 'student@example.com'];
 
     const csvContent = [
       headers.join(','),
       sample.join(','),
       // Add a few empty rows for users to fill
-      ',,,,'
+      ',,,,,,'
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -521,6 +525,16 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
                 />
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  placeholder="John Doe"
+                />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Program *</label>
                 <input
                   type="text"
@@ -591,6 +605,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Student ID</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Program</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Year</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phone</th>
@@ -601,7 +616,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
             <tbody className="bg-white divide-y divide-gray-200">
               {paginatedElectorates.length === 0 && (
                 <tr>
-                  <td colSpan="6" className="text-center py-12 text-gray-500">
+                  <td colSpan="7" className="text-center py-12 text-gray-500">
                     <FileSpreadsheet className="h-12 w-12 mx-auto mb-4 text-gray-400" />
                     <p>{searchTerm || filterProgram ? 'No voters match your filters' : 'No voters found'}</p>
                   </td>
@@ -611,6 +626,9 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
                 <tr key={electorate.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {formatStudentId(electorate.student_id)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                    {electorate.name || 'N/A'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {electorate.program || 'N/A'}
@@ -706,8 +724,8 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
                       key={pageNum}
                       onClick={() => goToPage(pageNum)}
                       className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${currentPage === pageNum
-                          ? "bg-blue-600 text-white"
-                          : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+                        ? "bg-blue-600 text-white"
+                        : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
                         }`}
                     >
                       {pageNum}

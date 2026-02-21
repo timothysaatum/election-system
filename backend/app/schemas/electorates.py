@@ -133,6 +133,7 @@ class StudentIDConverter:
 
 class ElectorateBase(BaseModel):
     student_id: str
+    name: Optional[str] = None
     program: Optional[str] = None
     year_level: Optional[int] = None
     phone_number: Optional[str] = None
@@ -192,6 +193,7 @@ class ElectorateCreate(ElectorateBase):
 
 class ElectorateUpdate(BaseModel):
     student_id: Optional[str] = None
+    name: Optional[str] = None
     program: Optional[str] = None
     year_level: Optional[int] = None
     phone_number: Optional[str] = None
@@ -587,8 +589,6 @@ __all__ = [
     "VoterSession",
     "VoterToken",
     "VoterAuthSchema",
-    "LinkRegistrationRequest",
-    "LinkRegistrationResponse",
     "TokenVerificationRequest",
     "TokenVerificationResponse",
     "TokenGenerationRequest",

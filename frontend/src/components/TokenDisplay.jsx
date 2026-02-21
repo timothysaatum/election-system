@@ -110,6 +110,17 @@ export const TokenDisplay = ({ token, electorate, onNewGeneration }) => {
                 <p className="text-sm font-bold text-slate-900">{electorate.student_id}</p>
               </div>
             </div>
+            {electorate.name && (
+              <div className="flex items-center gap-3 p-3 bg-white rounded-lg">
+                <div className="p-2 bg-teal-100 rounded-lg">
+                  <User className="h-5 w-5 text-teal-600" />
+                </div>
+                <div>
+                  <p className="text-xs text-slate-600 font-medium">Full Name</p>
+                  <p className="text-sm font-bold text-slate-900">{electorate.name}</p>
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-3 p-3 bg-white rounded-lg">
               <div className="p-2 bg-purple-100 rounded-lg">
                 <User className="h-5 w-5 text-purple-600" />
