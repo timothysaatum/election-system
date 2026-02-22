@@ -1,4 +1,5 @@
 const API_BASE_URL = process.env.REACT_APP_API_URL || "/api";
+
 // Request cache to prevent duplicate simultaneous requests
 const pendingRequests = new Map();
 
@@ -25,7 +26,7 @@ class ApiService {
 
     if (response.status === 401) {
       localStorage.removeItem("admin_token");
-      window.location.href = '/'; // Redirect to home, not reload
+      window.location.href = "/";
       return;
     }
 
@@ -43,26 +44,20 @@ class ApiService {
     const cacheKey = `${options.method || "GET"}:${endpoint}`;
 
     if (pendingRequests.has(cacheKey)) {
-      console.log(`[API] Reusing pending request for ${cacheKey}`);
       return pendingRequests.get(cacheKey);
     }
 
     if (!options.method || options.method === "GET") {
       const cached = dataCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        console.log(`[API] Using cached data for ${cacheKey}`);
         return cached.data;
       }
     }
 
-    console.log(`[API] Making new request to ${cacheKey}`);
     const promise = this.request(endpoint, options)
       .then((data) => {
         if (!options.method || options.method === "GET") {
-          dataCache.set(cacheKey, {
-            data,
-            timestamp: Date.now(),
-          });
+          dataCache.set(cacheKey, { data, timestamp: Date.now() });
         }
         return data;
       })
@@ -78,36 +73,99 @@ class ApiService {
     if (endpoint) {
       const cacheKey = `GET:${endpoint}`;
       dataCache.delete(cacheKey);
-      console.log(`[API] Cleared cache for ${cacheKey}`);
     } else {
       dataCache.clear();
-      console.log("[API] Cleared all cache");
     }
   }
 
-  // Auth - Returns role information
+  // -------------------------------------------------------------------------
+  // SSE Streaming
+  // -------------------------------------------------------------------------
+
+  /**
+   * Opens an SSE connection to a streaming endpoint.
+   *
+   * Because the native EventSource API cannot send custom headers (like
+   * Authorization), we pass the JWT as a ?token= query param. The backend
+   * reads it from there as a fallback.
+   *
+   * @param {string} endpoint         - e.g. "/admin/stream/results"
+   * @param {Function} onMessage      - called with the parsed JSON payload on each event
+   * @param {Function} [onError]      - called when a connection error occurs
+   * @param {number}   [interval=3]  - server-side push interval in seconds
+   * @returns {EventSource}           - call .close() to stop streaming
+   */
+  streamSSE(endpoint, onMessage, onError = null, interval = 3) {
+    const token = localStorage.getItem("admin_token");
+    if (!token) {
+      const err = new Error("No auth token found");
+      if (onError) onError(err);
+      return null;
+    }
+
+    const url = `${API_BASE_URL}${endpoint}?token=${encodeURIComponent(token)}&interval=${interval}`;
+    const es = new EventSource(url);
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        onMessage(data);
+      } catch (parseError) {
+        console.error("[SSE] Failed to parse message:", parseError);
+      }
+    };
+
+    es.addEventListener("error", (event) => {
+      // event here is an SSE error event, not a JS Error object
+      const err = new Error("SSE connection error");
+      console.error("[SSE] Connection error on", endpoint, event);
+      if (onError) onError(err);
+    });
+
+    return es;
+  }
+
+  /**
+   * Stream live election results.
+   * @param {Function} onData   - called with parsed results array on each push
+   * @param {Function} onError  - called on connection error
+   * @param {number} interval   - seconds between server pushes (default 3)
+   * @returns {EventSource}
+   */
+  streamResults(onData, onError = null, interval = 3) {
+    return this.streamSSE("/admin/stream/results", onData, onError, interval);
+  }
+
+  /**
+   * Stream live election statistics.
+   * @param {Function} onData   - called with parsed stats object on each push
+   * @param {Function} onError  - called on connection error
+   * @param {number} interval   - seconds between server pushes (default 3)
+   * @returns {EventSource}
+   */
+  streamStatistics(onData, onError = null, interval = 3) {
+    return this.streamSSE("/admin/stream/statistics", onData, onError, interval);
+  }
+
+  // -------------------------------------------------------------------------
+  // Auth
+  // -------------------------------------------------------------------------
+
   async login(username, password) {
-    const data = await this.request("/auth/login", {
+    return this.request("/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
-
-    // Data includes: access_token, role, permissions, is_admin
-    return data;
   }
 
   async verify() {
     return this.requestWithDedup("/auth/admin/verify");
   }
-  // async verify() {
-  // return this.requestWithDedup("/auth/verify");
-  // }
 
   async refreshToken() {
     return this.request("/auth/refresh", { method: "POST" });
   }
 
-  // Helper to get user's role-based route
   getRoleBasedRoute(role) {
     const routes = {
       admin: "/admin",
@@ -117,7 +175,10 @@ class ApiService {
     return routes[role] || "/";
   }
 
+  // -------------------------------------------------------------------------
   // Portfolios
+  // -------------------------------------------------------------------------
+
   async getPortfolios() {
     return this.requestWithDedup("/portfolios");
   }
@@ -125,19 +186,13 @@ class ApiService {
   async createPortfolio(data) {
     this.clearCache("/portfolios");
     this.clearCache("/admin/statistics");
-    return this.request("/portfolios", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    return this.request("/portfolios", { method: "POST", body: JSON.stringify(data) });
   }
 
   async updatePortfolio(id, data) {
     this.clearCache("/portfolios");
     this.clearCache("/admin/statistics");
-    return this.request(`/portfolios/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    });
+    return this.request(`/portfolios/${id}`, { method: "PATCH", body: JSON.stringify(data) });
   }
 
   async deletePortfolio(id) {
@@ -146,7 +201,10 @@ class ApiService {
     return this.request(`/portfolios/${id}`, { method: "DELETE" });
   }
 
+  // -------------------------------------------------------------------------
   // Candidates
+  // -------------------------------------------------------------------------
+
   async getCandidates() {
     return this.requestWithDedup("/candidates?active_only=false");
   }
@@ -155,20 +213,14 @@ class ApiService {
     this.clearCache("/candidates?active_only=false");
     this.clearCache("/admin/statistics");
     this.clearCache("/admin/results");
-    return this.request("/candidates", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    return this.request("/candidates", { method: "POST", body: JSON.stringify(data) });
   }
 
   async updateCandidate(id, data) {
     this.clearCache("/candidates?active_only=false");
     this.clearCache("/admin/statistics");
     this.clearCache("/admin/results");
-    return this.request(`/candidates/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    });
+    return this.request(`/candidates/${id}`, { method: "PATCH", body: JSON.stringify(data) });
   }
 
   async deleteCandidate(id) {
@@ -181,25 +233,23 @@ class ApiService {
   async uploadCandidateImage(file) {
     const formData = new FormData();
     formData.append("file", file);
-
     const token = localStorage.getItem("admin_token");
     const response = await fetch(`${API_BASE_URL}/candidates/upload-image`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
-
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.detail || "Image upload failed");
     }
-
     return response.json();
   }
 
+  // -------------------------------------------------------------------------
   // Electorates
+  // -------------------------------------------------------------------------
+
   async getElectorates(skip = 0, limit = 100) {
     return this.requestWithDedup(`/admin/voters?skip=${skip}&limit=${limit}`);
   }
@@ -207,19 +257,13 @@ class ApiService {
   async createElectorate(data) {
     this.clearCache("/admin/voters");
     this.clearCache("/admin/statistics");
-    return this.request("/electorates", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    return this.request("/electorates", { method: "POST", body: JSON.stringify(data) });
   }
 
   async updateElectorate(id, data) {
     this.clearCache("/admin/voters");
     this.clearCache("/admin/statistics");
-    return this.request(`/electorates/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    });
+    return this.request(`/electorates/${id}`, { method: "PATCH", body: JSON.stringify(data) });
   }
 
   async deleteElectorate(id) {
@@ -231,36 +275,31 @@ class ApiService {
   async bulkCreateElectorates(data) {
     this.clearCache("/admin/voters");
     this.clearCache("/admin/statistics");
-    return this.request("/electorates/bulk", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    return this.request("/electorates/bulk", { method: "POST", body: JSON.stringify(data) });
   }
 
   async bulkUploadElectorates(file) {
     const formData = new FormData();
     formData.append("file", file);
-
     const token = localStorage.getItem("admin_token");
     const response = await fetch(`${API_BASE_URL}/electorates/bulk-upload`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
-
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.detail || "Bulk upload failed");
     }
-
     this.clearCache("/admin/voters");
     this.clearCache("/admin/statistics");
     return response.json();
   }
 
+  // -------------------------------------------------------------------------
   // Token Generation
+  // -------------------------------------------------------------------------
+
   async generateTokensForAll(options = {}) {
     this.clearCache("/admin/voters");
     this.clearCache("/admin/statistics");
@@ -305,12 +344,14 @@ class ApiService {
     });
   }
 
-  // Statistics
+  // -------------------------------------------------------------------------
+  // Statistics & Results (one-shot, kept for non-streaming uses)
+  // -------------------------------------------------------------------------
+
   async getStatistics() {
     return this.requestWithDedup("/admin/statistics");
   }
 
-  // Results
   async getResults() {
     return this.requestWithDedup("/admin/results");
   }
@@ -319,7 +360,6 @@ class ApiService {
     return this.requestWithDedup(`/admin/recent-activity?limit=${limit}`);
   }
 
-  // Get electorates with their actual voting tokens
   async getElectorateTokens() {
     return this.requestWithDedup("/admin/electorate-tokens");
   }

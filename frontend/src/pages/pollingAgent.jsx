@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { BarChart3, Users, TrendingUp, RefreshCw, LogOut } from "lucide-react";
+import { BarChart3, Users, TrendingUp, RefreshCw, LogOut, Wifi, WifiOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import { AlertModal } from "../components/Modal";
@@ -7,10 +7,12 @@ import { ToastContainer } from "../components/Toast";
 import { useModal } from "../hooks/useModal";
 import { useToast } from "../hooks/useToast";
 
+// ---------------------------------------------------------------------------
+// Portfolio Card
+// ---------------------------------------------------------------------------
+
 const SimplePortfolioCard = ({ portfolio }) => {
-  const totalVotes = portfolio.total_votes || 0;
-  const totalRejected = portfolio.total_rejected || 0;
-  const candidates = portfolio.candidates || [];
+  const totalVotes = (portfolio.total_votes || 0) + (portfolio.total_rejected || 0);
 
   return (
     <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
@@ -18,40 +20,40 @@ const SimplePortfolioCard = ({ portfolio }) => {
         {portfolio.portfolio_name || portfolio.name}
       </h3>
 
-      <div className="mb-4 grid grid-cols-2 gap-4">
-        <div>
-          <p className="text-sm text-gray-600">Endorsed</p>
-          <p className="text-2xl font-bold text-green-600">{totalVotes}</p>
-        </div>
-        <div>
-          <p className="text-sm text-gray-600">Rejected</p>
-          <p className="text-2xl font-bold text-red-600">{totalRejected}</p>
-        </div>
+      <div className="mb-4">
+        <p className="text-sm text-gray-600">Total Votes</p>
+        <p className="text-2xl font-bold text-gray-900">{totalVotes}</p>
       </div>
-
-      {/* {candidates.length > 0 && (
-        <div className="border-t pt-4 mt-4">
-          <p className="text-sm font-semibold text-gray-700 mb-3">Candidates</p>
-          <div className="space-y-2">
-            {candidates.map((candidate) => (
-              <div key={candidate.id} className="text-sm">
-                <p className="font-medium text-gray-800">{candidate.name}</p>
-                <div className="flex gap-4 text-xs">
-                  <span className="text-green-600">
-                    ✓ {candidate.vote_count || 0} endorsed
-                  </span>
-                  <span className="text-red-600">
-                    ✗ {candidate.rejected_count || 0} rejected
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )} */}
     </div>
   );
 };
+
+// ---------------------------------------------------------------------------
+// Connection status badge
+// ---------------------------------------------------------------------------
+
+const StreamStatus = ({ connected }) => (
+  <span
+    className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${connected
+      ? "bg-green-100 text-green-700"
+      : "bg-red-100 text-red-700"
+      }`}
+  >
+    {connected ? (
+      <>
+        <Wifi className="h-3 w-3" /> Live
+      </>
+    ) : (
+      <>
+        <WifiOff className="h-3 w-3" /> Reconnecting…
+      </>
+    )}
+  </span>
+);
+
+// ---------------------------------------------------------------------------
+// Login
+// ---------------------------------------------------------------------------
 
 const PollingAgentLogin = ({ onLogin, alertModal }) => {
   const [username, setUsername] = useState("");
@@ -73,12 +75,13 @@ const PollingAgentLogin = ({ onLogin, alertModal }) => {
     try {
       const data = await api.login(username, password);
 
-      // FIXED: Allow polling_agent AND admin roles
       if (data.role === "polling_agent" || data.role === "admin") {
         localStorage.setItem("admin_token", data.access_token);
         onLogin(data);
       } else {
-        throw new Error(`Access denied. This portal is for Polling Agents only. You are logged in as ${data.role}.`);
+        throw new Error(
+          `Access denied. This portal is for Polling Agents only. You are logged in as ${data.role}.`
+        );
       }
     } catch (err) {
       alertModal.showAlert({
@@ -96,17 +99,13 @@ const PollingAgentLogin = ({ onLogin, alertModal }) => {
       <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
           <BarChart3 className="h-16 w-16 text-green-600 mx-auto mb-4" />
-          <h1 className="text-3xl font-bold text-gray-900">
-            Live Results Portal
-          </h1>
+          <h1 className="text-3xl font-bold text-gray-900">Live Results Portal</h1>
           <p className="text-gray-600 mt-2">Polling Agent Access</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Username
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Username</label>
             <input
               type="text"
               value={username}
@@ -119,9 +118,7 @@ const PollingAgentLogin = ({ onLogin, alertModal }) => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
             <input
               type="password"
               value={password}
@@ -146,70 +143,111 @@ const PollingAgentLogin = ({ onLogin, alertModal }) => {
   );
 };
 
+// ---------------------------------------------------------------------------
+// Dashboard — SSE-powered
+// ---------------------------------------------------------------------------
+
 const PollingAgentDashboard = ({ agent, onLogout }) => {
   const [stats, setStats] = useState(null);
   const [results, setResults] = useState(null);
-  const [autoRefresh, setAutoRefresh] = useState(false);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [streamsConnected, setStreamsConnected] = useState(false);
+
+  // Refs to hold the two EventSource instances so we can close them on unmount
+  const resultsStreamRef = useRef(null);
+  const statsStreamRef = useRef(null);
+  // Track how many streams have successfully received at least one message
+  const connectedCountRef = useRef(0);
 
   const alertModalRef = useRef(useModal());
   const alertModal = alertModalRef.current;
   const toast = useToast();
 
-  const loadResults = useCallback(async () => {
-    try {
-      const [statsData, resultsData] = await Promise.all([
-        api.getStatistics().catch(() => null),
-        api.getResults().catch(() => []),
-      ]);
-      setStats(statsData);
-      setResults(resultsData);
-      setLastUpdate(new Date());
-    } catch (err) {
-      console.error("Failed to load results:", err);
-    } finally {
+  // ---- helpers ----
+
+  const markConnected = useCallback(() => {
+    connectedCountRef.current += 1;
+    // Both streams are up once we've received from each
+    if (connectedCountRef.current >= 2) {
+      setStreamsConnected(true);
       setLoading(false);
     }
   }, []);
 
+  const closeStreams = useCallback(() => {
+    if (resultsStreamRef.current) {
+      resultsStreamRef.current.close();
+      resultsStreamRef.current = null;
+    }
+    if (statsStreamRef.current) {
+      statsStreamRef.current.close();
+      statsStreamRef.current = null;
+    }
+    connectedCountRef.current = 0;
+  }, []);
+
+  // ---- open SSE connections ----
+
+  const openStreams = useCallback(() => {
+    closeStreams();
+    setStreamsConnected(false);
+
+    // Results stream
+    resultsStreamRef.current = api.streamResults(
+      (data) => {
+        setResults(data);
+        setLastUpdate(new Date());
+        if (connectedCountRef.current < 1) markConnected();
+      },
+      (err) => {
+        console.error("[SSE] Results stream error:", err);
+        setStreamsConnected(false);
+        // EventSource auto-reconnects natively; we just reflect the status
+      }
+    );
+
+    // Statistics stream
+    statsStreamRef.current = api.streamStatistics(
+      (data) => {
+        setStats(data);
+        setLastUpdate(new Date());
+        if (connectedCountRef.current < 2) markConnected();
+      },
+      (err) => {
+        console.error("[SSE] Statistics stream error:", err);
+        setStreamsConnected(false);
+      }
+    );
+  }, [closeStreams, markConnected]);
+
+  // Open streams on mount, close on unmount
   useEffect(() => {
-    loadResults();
-  }, [loadResults]);
+    openStreams();
+    return closeStreams;
+  }, [openStreams, closeStreams]);
 
-  useEffect(() => {
-    if (!autoRefresh) return;
+  // ---- manual refresh: close & re-open streams ----
+  const handleManualRefresh = useCallback(() => {
+    setLoading(true);
+    openStreams();
+  }, [openStreams]);
 
-    console.log("Setting up auto-refresh interval (5 seconds)");
-    const interval = setInterval(() => {
-      console.log("Auto-refreshing results...");
-      loadResults();
-    }, 5000);
-
-    return () => {
-      console.log("Cleaning up auto-refresh interval");
-      clearInterval(interval);
-    };
-  }, [autoRefresh, loadResults]);
+  // ---- render ----
 
   const votingStats = stats?.voting || {};
 
   return (
     <div className="min-h-screen bg-gray-50">
       <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
-      <AlertModal
-        {...alertModal}
-        onClose={alertModal.handleClose}
-        {...alertModal.modalProps}
-      />
+      <AlertModal {...alertModal} onClose={alertModal.handleClose} {...alertModal.modalProps} />
 
+      {/* Header */}
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">
-                Kratos(Live Results)
-              </h1>
+              <h1 className="text-2xl font-bold text-gray-900">Kratos (Live Results)</h1>
               <p className="text-sm text-gray-600">
                 Welcome, {agent?.username}
                 <span className="ml-2 text-green-600 font-medium">
@@ -217,26 +255,21 @@ const PollingAgentDashboard = ({ agent, onLogout }) => {
                 </span>
               </p>
             </div>
+
             <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={autoRefresh}
-                  onChange={(e) => setAutoRefresh(e.target.checked)}
-                  className="h-4 w-4 text-green-600 rounded focus:ring-2 focus:ring-green-500"
-                />
-                Auto-refresh (5s)
-              </label>
+              {/* Live / Reconnecting badge */}
+              <StreamStatus connected={streamsConnected} />
+
+              {/* Manual refresh */}
               <button
-                onClick={loadResults}
+                onClick={handleManualRefresh}
                 disabled={loading}
                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50 transition-colors"
-                title="Refresh Now"
+                title="Reconnect streams"
               >
-                <RefreshCw
-                  className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
-                />
+                <RefreshCw className={`h-5 w-5 ${loading ? "animate-spin" : ""}`} />
               </button>
+
               <button
                 onClick={onLogout}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
@@ -249,7 +282,9 @@ const PollingAgentDashboard = ({ agent, onLogout }) => {
         </div>
       </header>
 
+      {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Stats row */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
@@ -300,14 +335,14 @@ const PollingAgentDashboard = ({ agent, onLogout }) => {
           </div>
         </div>
 
+        {/* Portfolio results */}
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">
-            Portfolio Results
-          </h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">Portfolio Results</h2>
+
           {loading && !results ? (
             <div className="text-center py-12">
               <RefreshCw className="h-12 w-12 text-green-600 animate-spin mx-auto" />
-              <p className="mt-4 text-gray-600">Loading live results...</p>
+              <p className="mt-4 text-gray-600">Connecting to live results…</p>
             </div>
           ) : !results || results.length === 0 ? (
             <div className="bg-white rounded-lg shadow p-12 text-center">
@@ -316,22 +351,30 @@ const PollingAgentDashboard = ({ agent, onLogout }) => {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {results.map((portfolio) => (
-                <SimplePortfolioCard key={portfolio.portfolio_id} portfolio={portfolio} />
+                <SimplePortfolioCard
+                  key={portfolio.portfolio_id}
+                  portfolio={portfolio}
+                />
               ))}
             </div>
           )}
         </div>
 
+        {/* Footer */}
         <div className="mt-8 text-center">
           <p className="text-sm text-gray-500">
             Last updated: {lastUpdate.toLocaleTimeString()}
-            {autoRefresh && " • Auto-refreshing every 5 seconds"}
+            {streamsConnected ? "" : " (Disconnected, trying to reconnect…)"}
           </p>
         </div>
       </main>
     </div>
   );
 };
+
+// ---------------------------------------------------------------------------
+// Root — auth gate
+// ---------------------------------------------------------------------------
 
 export default function PollingAgentPortal() {
   const navigate = useNavigate();
@@ -349,18 +392,14 @@ export default function PollingAgentPortal() {
     try {
       const data = await api.verify();
 
-      console.log("Polling Agent - User data:", data);
-
-      // Allow polling_agent and admin roles only
       if (data.role === "polling_agent" || data.role === "admin") {
         setAgent(data);
       } else {
-        // Redirect to appropriate page
         const correctRoute = api.getRoleBasedRoute(data.role);
         localStorage.removeItem("admin_token");
         await alertModal.showAlert({
           title: "Access Denied",
-          message: `This page is for Polling Agents only. Redirecting to ${data.role} portal...`,
+          message: `This page is for Polling Agents only. Redirecting to ${data.role} portal…`,
           type: "error",
         });
         setTimeout(() => navigate(correctRoute), 2000);
@@ -384,17 +423,13 @@ export default function PollingAgentPortal() {
   }, [checkAuth]);
 
   const handleLogin = (data) => {
-    console.log("Login attempt - User data:", data);
-
-    // Verify role access after login
     if (data.role === "polling_agent" || data.role === "admin") {
       setAgent(data);
     } else {
-      // Redirect to correct portal
       const correctRoute = api.getRoleBasedRoute(data.role);
       alertModal.showAlert({
         title: "Wrong Portal",
-        message: `You are logged in as ${data.role}. Redirecting to your portal...`,
+        message: `You are logged in as ${data.role}. Redirecting to your portal…`,
         type: "info",
       });
       setTimeout(() => navigate(correctRoute), 2000);
@@ -405,7 +440,7 @@ export default function PollingAgentPortal() {
   const handleLogout = () => {
     localStorage.removeItem("admin_token");
     setAgent(null);
-    navigate('/');
+    navigate("/");
   };
 
   if (loading) {
@@ -419,11 +454,7 @@ export default function PollingAgentPortal() {
   if (!agent) {
     return (
       <>
-        <AlertModal
-          {...alertModal}
-          onClose={alertModal.handleClose}
-          {...alertModal.modalProps}
-        />
+        <AlertModal {...alertModal} onClose={alertModal.handleClose} {...alertModal.modalProps} />
         <PollingAgentLogin onLogin={handleLogin} alertModal={alertModal} />
       </>
     );

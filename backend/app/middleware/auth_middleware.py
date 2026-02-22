@@ -23,8 +23,39 @@ from sqlalchemy.future import select
 
 logger = logging.getLogger(__name__)
 
-security_scheme = HTTPBearer()
-admin_security_scheme = HTTPBearer()
+class FlexibleHTTPBearer(HTTPBearer):
+    """
+    Extends HTTPBearer to also accept the JWT via a ?token= query parameter.
+    This is required for SSE / EventSource connections, which cannot set
+    custom headers like Authorization.
+
+    Priority:
+      1. Authorization: Bearer <token>  (standard header — all normal requests)
+      2. ?token=<token>                 (query param fallback — SSE / EventSource)
+    """
+
+    async def __call__(self, request: Request) -> HTTPAuthorizationCredentials:
+        # 1. Try the standard Authorization header first
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+            if token:
+                return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+        # 2. Fallback: read from ?token= query param (EventSource / SSE)
+        token = request.query_params.get("token", "").strip()
+        if token:
+            return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+        # Neither found — let the parent raise the appropriate 403
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authenticated",
+        )
+
+
+security_scheme = FlexibleHTTPBearer()
+admin_security_scheme = FlexibleHTTPBearer()
 
 
 # ============================================================================

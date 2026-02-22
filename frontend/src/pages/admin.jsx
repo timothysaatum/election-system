@@ -12,7 +12,6 @@ import { PortfolioManager } from "../components/PortfolioManager";
 import { CandidateManager } from "../components/CandidateManager";
 import { ElectorateManager } from "../components/ElectorateManager";
 import { ResultsView } from "../components/ResultsView";
-// import { TokenGenerator } from "../components/TokenGenerator";
 import TokenGenerator from '../components/TokenGenerator';
 
 const Admin = () => {
