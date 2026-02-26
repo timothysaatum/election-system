@@ -1,23 +1,26 @@
 from datetime import datetime, timezone
 from uuid import UUID
 import uuid
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from app.models.electorates import Electorate
 from app.schemas.electorates import ElectorateCreate, ElectorateUpdate, StudentIDConverter
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-import hashlib
-import secrets
+
+logger = logging.getLogger(__name__)
 
 
 def hash_voting_pin(voting_pin: str) -> str:
-    """Hash a voting pin using SHA-256 with salt"""
+    """
+    Hash a voting PIN using Argon2id.
+    Unified with the rest of the codebase — SHA-256 path removed.
+    """
     if not voting_pin:
         return ""
-    salt = secrets.token_hex(16)
-    hashed = hashlib.sha256((voting_pin + salt).encode()).hexdigest()
-    return f"{salt}:{hashed}"
+    from app.utils.security import hash_password
+    return hash_password(voting_pin)
 
 
 async def get_electorate_by_student_id(
@@ -33,8 +36,7 @@ async def get_electorate_by_student_id(
 
 async def get_electorates(
     db: AsyncSession, skip: int = 0, limit: int = 100
-) -> List[Electorate]:
-    
+) -> List[dict]:
     result = await db.execute(
         select(Electorate)
         .options(selectinload(Electorate.voting_tokens))
@@ -43,25 +45,22 @@ async def get_electorates(
         .limit(limit)
     )
     electorates = result.scalars().all()
-    
+
     now = datetime.now(timezone.utc)
-    
     response = []
+
     for electorate in electorates:
         has_active_token = False
-        if electorate.voting_tokens:
-            for token in electorate.voting_tokens:
-                if token.revoked or not token.is_active:
-                    continue
-                
-                expires_at = token.expires_at
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
-                
-                if expires_at > now:
-                    has_active_token = True
-                    break
-        
+        for token in (electorate.voting_tokens or []):
+            if token.revoked or not token.is_active:
+                continue
+            expires_at = token.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at > now:
+                has_active_token = True
+                break
+
         response.append({
             "id": str(electorate.id),
             "student_id": StudentIDConverter.to_display(electorate.student_id),
@@ -74,43 +73,35 @@ async def get_electorates(
             "voted_at": electorate.voted_at.isoformat() if electorate.voted_at else None,
             "created_at": electorate.created_at.isoformat(),
             "updated_at": electorate.updated_at.isoformat(),
-            "voting_token": "GENERATED" if has_active_token else None
+            "voting_token": "GENERATED" if has_active_token else None,
         })
-    
-    return response
-    
 
-async def get_electorate(
-    db: AsyncSession, voter_id: UUID
-) -> Optional[Electorate]:
-    """Get electorate by UUID"""
+    return response
+
+
+async def get_electorate(db: AsyncSession, voter_id: UUID) -> Optional[Electorate]:
     result = await db.execute(
-        select(Electorate).options(selectinload(Electorate.voting_tokens)).where(Electorate.id == voter_id)
+        select(Electorate)
+        .options(selectinload(Electorate.voting_tokens))
+        .where(Electorate.id == voter_id)
     )
     return result.scalar_one_or_none()
 
 
-async def create_electorate(
-    db: AsyncSession, electorate: ElectorateCreate
-) -> Electorate:
-    # Extract voting_pin and hash it, then create the model data
+async def create_electorate(db: AsyncSession, electorate: ElectorateCreate) -> Electorate:
     electorate_data = electorate.model_dump()
-    voting_pin = electorate_data.pop('voting_pin', None)
-    
-    # Hash the voting pin if provided
+    voting_pin = electorate_data.pop("voting_pin", None)
     voting_pin_hash = hash_voting_pin(voting_pin) if voting_pin else ""
-    
-    # Create the Electorate object with the correct field name
-    db_electorate = Electorate(
-        voting_pin_hash=voting_pin_hash,
-        **electorate_data
-    )
+
+    db_electorate = Electorate(voting_pin_hash=voting_pin_hash, **electorate_data)
     db.add(db_electorate)
     await db.commit()
-    # Refresh then re-query with tokens eagerly loaded to avoid lazy IO during serialization
     await db.refresh(db_electorate)
+
     result = await db.execute(
-        select(Electorate).options(selectinload(Electorate.voting_tokens)).where(Electorate.id == db_electorate.id)
+        select(Electorate)
+        .options(selectinload(Electorate.voting_tokens))
+        .where(Electorate.id == db_electorate.id)
     )
     return result.scalar_one()
 
@@ -124,113 +115,86 @@ async def update_electorate(
     db_electorate = result.scalar_one_or_none()
     if not db_electorate:
         return None
-    
+
     update_data = updates.model_dump(exclude_unset=True)
-    
-    # Handle voting_pin field separately
-    if 'voting_pin' in update_data:
-        voting_pin = update_data.pop('voting_pin')
-        voting_pin_hash = hash_voting_pin(voting_pin) if voting_pin else ""
-        setattr(db_electorate, 'voting_pin_hash', voting_pin_hash)
-    
-    # Update other fields
+
+    if "voting_pin" in update_data:
+        voting_pin = update_data.pop("voting_pin")
+        db_electorate.voting_pin_hash = hash_voting_pin(voting_pin) if voting_pin else ""
+
     for field, value in update_data.items():
         setattr(db_electorate, field, value)
-    
+
     await db.commit()
     await db.refresh(db_electorate)
-    # Re-query with tokens eagerly loaded to prevent lazy IO during response validation
+
     result = await db.execute(
-        select(Electorate).options(selectinload(Electorate.voting_tokens)).where(Electorate.id == db_electorate.id)
+        select(Electorate)
+        .options(selectinload(Electorate.voting_tokens))
+        .where(Electorate.id == db_electorate.id)
     )
     return result.scalar_one()
 
+
 async def delete_electorate(db: AsyncSession, electorate_id: str) -> bool:
     """
-    Deletes an electorate. 
-    Associated Votes and VotingSessions will be automatically deleted by 
-    the database via ON DELETE CASCADE constraints.
+    Delete an electorate.
+    Associated Votes, VotingSessions, and VotingTokens are removed automatically
+    by ON DELETE CASCADE constraints defined on the FK columns.
     """
     try:
-        # Ensure uuid format if the input is a string
-        if isinstance(electorate_id, str):
-            electorate_uuid = uuid.UUID(electorate_id)
-        else:
-            electorate_uuid = electorate_id
-
+        electorate_uuid = (
+            uuid.UUID(electorate_id) if isinstance(electorate_id, str) else electorate_id
+        )
         result = await db.execute(
             delete(Electorate).where(Electorate.id == electorate_uuid)
         )
-        
         await db.commit()
         return result.rowcount > 0
-        
-    except Exception as e:
+    except Exception as exc:
         await db.rollback()
-        raise e
+        raise exc
 
 
 async def bulk_create_electorates(
     db: AsyncSession, electorate_list: List[ElectorateCreate]
 ) -> List[Electorate]:
-
-    # ----------------------------
-    # 1. Deduplicate within upload
-    # ----------------------------
-    unique_map = {}
-    for e in electorate_list:
-        unique_map[e.student_id] = e
-
+    # Deduplicate within upload
+    unique_map = {e.student_id: e for e in electorate_list}
     electorate_list = list(unique_map.values())
-
     student_ids = [e.student_id for e in electorate_list]
 
-    # ---------------------------------
-    # 2. Fetch already existing students
-    # ---------------------------------
+    # Fetch already-existing student IDs
     result = await db.execute(
         select(Electorate.student_id).where(Electorate.student_id.in_(student_ids))
     )
     existing_ids = set(result.scalars().all())
 
-    # ----------------------------
-    # 3. Build only new objects
-    # ----------------------------
     objs = []
-
     for e in electorate_list:
         if e.student_id in existing_ids:
+            logger.debug("Skipping duplicate student_id: %s", e.student_id)
             continue
-
-        electorate_data = e.model_dump()
-        voting_pin = electorate_data.pop("voting_pin", None)
-
-        voting_pin_hash = hash_voting_pin(voting_pin) if voting_pin else ""
-
+        data = e.model_dump()
+        voting_pin = data.pop("voting_pin", None)
         obj = Electorate(
-            voting_pin_hash=voting_pin_hash,
-            **electorate_data
+            voting_pin_hash=hash_voting_pin(voting_pin) if voting_pin else "",
+            **data,
         )
         objs.append(obj)
 
     if not objs:
         return []
 
-    # ----------------------------
-    # 4. Insert
-    # ----------------------------
     db.add_all(objs)
     await db.commit()
-
     for obj in objs:
         await db.refresh(obj)
 
     ids = [obj.id for obj in objs]
-
     result = await db.execute(
         select(Electorate)
         .options(selectinload(Electorate.voting_tokens))
         .where(Electorate.id.in_(ids))
     )
-
     return result.scalars().all()

@@ -47,9 +47,32 @@ COPY --from=build /app/build /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY default.conf /etc/nginx/conf.d/default.conf
 
-# Set permissions
+# Set permissions on static files
 RUN chown -R nginx:nginx /usr/share/nginx/html && \
     chmod -R 755 /usr/share/nginx/html
+
+# ── Fix cache/temp directory permissions ─────────────────────────────────────
+# Docker named volumes are created as root:root on first use.  Nginx workers
+# run as the 'nginx' user and need write access to these directories.
+# Pre-creating them here with the correct owner means Docker copies this
+# ownership into the named volume on first initialisation, so workers can
+# always write without a root entrypoint wrapper.
+RUN mkdir -p \
+    /var/cache/nginx/client_temp \
+    /var/cache/nginx/proxy_temp \
+    /var/cache/nginx/fastcgi_temp \
+    /var/cache/nginx/uwsgi_temp \
+    /var/cache/nginx/scgi_temp \
+    /var/log/nginx \
+    /var/run && \
+    chown -R nginx:nginx \
+    /var/cache/nginx \
+    /var/log/nginx \
+    /var/run && \
+    chmod -R 755 /var/cache/nginx
+
+# Upload volume mount point — read-only at runtime, no special ownership needed
+RUN mkdir -p /usr/share/nginx/uploads
 
 # Expose port (changed from 8080 to 80 for simplicity)
 EXPOSE 80

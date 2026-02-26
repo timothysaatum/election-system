@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # Server Configuration
     HOST: str = "0.0.0.0"  # Allow connections from local network
     PORT: int = 8000
-    WORKERS: int = 4  # Increased for better scalability
+    WORKERS: int = 4
     RELOAD: bool = True
 
     # Admin Credentials (Role-based)
@@ -44,39 +44,49 @@ class Settings(BaseSettings):
     SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours for admin sessions
-    VOTING_TOKEN_EXPIRE_HOURS: int = 24  # 24 hours for voting tokens
+    VOTING_TOKEN_EXPIRE_HOURS: int = 24     # 24 hours for voting tokens
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://kratos_user:SecurePass!123@database:5432/kratos_election"
-    DATABASE_POOL_SIZE: int = 20  # Increased for scalability
+    DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 40
     DATABASE_POOL_TIMEOUT: int = 30
     DATABASE_POOL_RECYCLE: int = 3600
     DATABASE_ECHO: bool = False
 
-    # CORS Settings (for local network)
+    # CORS Settings - enumerate real IPs; wildcards are NOT supported by CORSMiddleware
+    # Add your actual LAN IPs here. Comma-separated in .env:
+    # ALLOWED_ORIGINS=http://192.168.1.10:3000,http://192.168.1.11:3000
     ALLOWED_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "http://192.168.*:3000",
-        "http://10.0.*:3000",
     ]
-    ALLOWED_METHODS: List[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    ALLOWED_METHODS: List[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
     ALLOWED_HEADERS: List[str] = ["*"]
     ALLOW_CREDENTIALS: bool = True
 
-    # Rate Limiting (simplified for offline)
-    RATE_LIMIT_AUTH_REQUESTS: int = 10  # Login attempts per window
-    RATE_LIMIT_AUTH_WINDOW: int = 300  # 5 minutes
-    RATE_LIMIT_VOTE_REQUESTS: int = 5  # Vote attempts per window
-    RATE_LIMIT_VOTE_WINDOW: int = 60  # 1 minute
+    # Rate Limiting — these are PER-PROCESS limits.
+    # With multiple workers, effective attempts = limit × workers.
+    # Keep conservative so even cross-worker abuse is bounded.
+    RATE_LIMIT_AUTH_REQUESTS: int = 5   # per window per IP
+    RATE_LIMIT_AUTH_WINDOW: int = 300   # 5 minutes
+    RATE_LIMIT_VOTE_REQUESTS: int = 3   # per window per IP
+    RATE_LIMIT_VOTE_WINDOW: int = 60    # 1 minute
+
+    # Per-token failure lockout: revoke token after this many bad attempts
+    TOKEN_MAX_FAILURES: int = 5
 
     # Session Configuration
-    SESSION_EXPIRE_MINUTES: int = 30  # Voting session timeout
+    SESSION_EXPIRE_MINUTES: int = 30
     SESSION_COOKIE_NAME: str = "voting_session"
-    SESSION_COOKIE_SECURE: bool = False  # Offline system
+    SESSION_COOKIE_SECURE: bool = False   # HTTP is fine for LAN-only offline
     SESSION_COOKIE_HTTPONLY: bool = True
     SESSION_COOKIE_SAMESITE: str = "lax"
+
+    # SSE streaming bounds
+    SSE_MIN_INTERVAL: int = 1    # seconds — never allow tighter than this
+    SSE_MAX_INTERVAL: int = 60   # seconds — never allow looser than this
+    SSE_DEFAULT_INTERVAL: int = 3
 
     # Logging
     LOG_LEVEL: str = "INFO"
@@ -84,9 +94,13 @@ class Settings(BaseSettings):
     LOG_FILE: Optional[str] = "election_system.log"
 
     # Election-Specific Settings
+    # Tokens are 4 characters from a 32-char alphabet (excludes 0/O/1/I/l).
+    # 32^4 = 1,048,576 combinations.  Brute force is mitigated by:
+    #   a) per-token failure lockout (TOKEN_MAX_FAILURES above)
+    #   b) mandatory student_id second factor in verify-id endpoint
+    VOTING_TOKEN_LENGTH: int = 4
     MAX_CANDIDATES_PER_PORTFOLIO: int = 50
-    MAX_VOTERS_PER_ELECTION: int = 50000  # Increased for scalability
-    VOTING_TOKEN_LENGTH: int = 8  # Format: AB12-CD34
+    MAX_VOTERS_PER_ELECTION: int = 50000
 
     # Audit & Compliance
     AUDIT_LOG_ENABLED: bool = True
@@ -110,7 +124,17 @@ class Settings(BaseSettings):
     @field_validator("ALLOWED_ORIGINS", mode="before")
     def validate_cors_origins(cls, v):
         if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
+            origins = [o.strip() for o in v.split(",") if o.strip()]
+            # Warn if wildcards are present — they won't work
+            for origin in origins:
+                if "*" in origin:
+                    import warnings
+                    warnings.warn(
+                        f"CORS origin '{origin}' contains a wildcard which is NOT "
+                        "supported by CORSMiddleware. Use exact origin strings.",
+                        stacklevel=2,
+                    )
+            return origins
         return v
 
     @property
@@ -126,6 +150,10 @@ class Settings(BaseSettings):
         """Synchronous database URL for Alembic migrations"""
         return self.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
 
+    def clamp_sse_interval(self, requested: int) -> int:
+        """Return a safe SSE interval within configured bounds."""
+        return max(self.SSE_MIN_INTERVAL, min(requested, self.SSE_MAX_INTERVAL))
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -135,32 +163,27 @@ class Settings(BaseSettings):
 
 # Development Settings
 class DevelopmentSettings(Settings):
-    """Development environment settings"""
-
     ENVIRONMENT: Environment = Environment.DEVELOPMENT
     DEBUG: bool = True
     RELOAD: bool = True
-    DATABASE_ECHO: bool = True
+    DATABASE_ECHO: bool = False   # keep False even in dev — too noisy with async
     LOG_LEVEL: str = "DEBUG"
 
 
 # Production Settings
 class ProductionSettings(Settings):
-    """Production environment settings"""
-
     ENVIRONMENT: Environment = Environment.PRODUCTION
     DEBUG: bool = False
     RELOAD: bool = False
     DATABASE_ECHO: bool = False
     LOG_LEVEL: str = "WARNING"
 
-    # Enhanced connection pooling for production
     DATABASE_POOL_SIZE: int = 30
     DATABASE_MAX_OVERFLOW: int = 60
 
-    # Stricter rate limiting
-    RATE_LIMIT_AUTH_REQUESTS: int = 5
-    RATE_LIMIT_VOTE_REQUESTS: int = 3
+    # Tighter rate limits in production
+    RATE_LIMIT_AUTH_REQUESTS: int = 3
+    RATE_LIMIT_VOTE_REQUESTS: int = 2
 
     @field_validator("SECRET_KEY")
     def secret_key_required(cls, v):
@@ -169,27 +192,28 @@ class ProductionSettings(Settings):
         return v
 
 
-# Factory function
 def get_settings() -> Settings:
     """Get settings based on environment variable"""
     env = os.getenv("ENVIRONMENT", "development").lower()
-
     if env == "production":
         return ProductionSettings()
-    else:
-        return DevelopmentSettings()
+    return DevelopmentSettings()
 
 
-# Global settings instance
 settings = get_settings()
 
-# Rate Limiting Configuration
+# Validate at startup — refuse to run with obviously wrong config
+if settings.is_production and settings.DEBUG:
+    raise RuntimeError(
+        "FATAL: DEBUG=True in PRODUCTION environment. "
+        "Set ENVIRONMENT=development or DEBUG=False."
+    )
+
 RATE_LIMIT_CONFIG = {
     "auth": f"{settings.RATE_LIMIT_AUTH_REQUESTS}/{settings.RATE_LIMIT_AUTH_WINDOW}",
     "voting": f"{settings.RATE_LIMIT_VOTE_REQUESTS}/{settings.RATE_LIMIT_VOTE_WINDOW}",
 }
 
-# Export commonly used settings
 __all__ = [
     "settings",
     "Settings",

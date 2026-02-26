@@ -1,4 +1,8 @@
 services:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # DATABASE
+  # ──────────────────────────────────────────────────────────────────────────
   database:
     image: postgres:15-alpine
     container_name: kratos_database
@@ -7,6 +11,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-kratos_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Database password required}
       POSTGRES_INITDB_ARGS: "-E UTF8 --locale=en_US.UTF-8"
+      # Tune shared_buffers and work_mem for the 512 MB memory limit.
+      # shared_buffers ≈ 25 % of available RAM; work_mem per-sort.
+      POSTGRES_SHARED_BUFFERS: "128MB"
+      POSTGRES_WORK_MEM: "4MB"
+      POSTGRES_MAX_CONNECTIONS: "100"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -17,35 +26,50 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
     deploy:
       resources:
         limits:
           cpus: '1'
           memory: 512M
         reservations:
-          cpus: '0.5'
+          cpus: '0.25'
           memory: 256M
     security_opt:
       - no-new-privileges:true
+    # read_only: true is correct for postgres but requires the two tmpfs mounts
     read_only: true
     tmpfs:
       - /tmp
       - /var/run/postgresql
 
+  # ──────────────────────────────────────────────────────────────────────────
+  # BACKEND
+  # ──────────────────────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: kratos_backend
-    ports:
-      - "8000:8000"
+    # Do NOT expose 8000 to the host — all traffic must flow through Nginx.
+    # The port is still reachable on the internal kratos_network.
+    # Uncomment the line below ONLY for local debugging:
+    # ports:
+    #   - "127.0.0.1:8000:8000"
     env_file:
       - .env
     volumes:
-      - ./backend:/app  # <-- CRITICAL FIX: Maps local code to container for persistent migrations
+      # Persistent uploads volume — shared with frontend for direct serving
       - election_uploads:/app/uploads:rw
+      # Persistent logs
       - backend_logs:/app/logs:rw
+      # NOTE: The source-code bind-mount that was here (./backend:/app) has
+      # been removed.  Bind-mounting source into a production container:
+      #   • lets anyone who can write to ./backend modify running code
+      #   • bypasses the Docker image build layer cache
+      #   • breaks when the host path doesn't exist on another machine
+      # Run `docker compose build backend` to rebuild after code changes.
+      # Alembic migrations: run via `docker compose exec backend alembic upgrade head`
     restart: unless-stopped
     networks:
       - kratos_network
@@ -53,11 +77,12 @@ services:
       database:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/healthcheck"]
+      # Uses the /api/admin/health endpoint added in admin_router.py
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/admin/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 45s
     deploy:
       resources:
         limits:
@@ -73,6 +98,9 @@ services:
     cap_add:
       - NET_BIND_SERVICE
 
+  # ──────────────────────────────────────────────────────────────────────────
+  # FRONTEND  (React SPA + Nginx reverse proxy)
+  # ──────────────────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -86,6 +114,8 @@ services:
     volumes:
       - nginx_cache:/var/cache/nginx:rw
       - nginx_logs:/var/log/nginx:rw
+      # Serve uploads directly from Nginx — avoids proxying static files
+      # through the backend on every request
       - election_uploads:/usr/share/nginx/uploads:ro
     restart: unless-stopped
     networks:
@@ -94,16 +124,16 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/healthcheck"]
+      test: ["CMD-SHELL", "curl -sf http://localhost/healthcheck || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     deploy:
       resources:
         limits:
           cpus: '1'
-          memory: 512M
+          memory: 256M
         reservations:
           cpus: '0.25'
           memory: 128M

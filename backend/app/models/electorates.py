@@ -6,6 +6,9 @@ from sqlalchemy import (
     func,
     Text,
     ForeignKey,
+    UniqueConstraint,
+    JSON,
+    Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
@@ -44,19 +47,19 @@ class Electorate(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-    
+
     # Relationships
     voting_tokens: Mapped[list["VotingToken"]] = relationship(
-        "VotingToken", 
+        "VotingToken",
         back_populates="electorate",
         cascade="all, delete-orphan",
-        passive_deletes=True
+        passive_deletes=True,
     )
     votes: Mapped[list["Vote"]] = relationship(
-        "Vote", 
-        back_populates="electorate", 
+        "Vote",
+        back_populates="electorate",
         cascade="all, delete-orphan",
-        passive_deletes=True # vital for high-performance DB-side deletion
+        passive_deletes=True,
     )
     voting_sessions: Mapped[list["VotingSession"]] = relationship(
         "VotingSession",
@@ -65,72 +68,46 @@ class Electorate(Base):
         passive_deletes=True,
     )
 
-
     @property
     def voting_token(self) -> Optional[str]:
-        # Avoid triggering lazy-load / IO when accessed by pydantic outside async context
+        """Return 'GENERATED' if this electorate has any live active token."""
         tokens = self.__dict__.get("voting_tokens")
         if tokens is None:
             return None
-
-        # Get current time (timezone-aware)
         now = datetime.now(timezone.utc)
-
         try:
-            active_tokens = []
             for token in tokens:
-                # Skip revoked or inactive tokens
                 if token.revoked or not token.is_active:
                     continue
-
-                # Handle timezone comparison safely
                 expires_at = token.expires_at
-
-                # If expires_at is timezone-naive, make it timezone-aware (assume UTC)
                 if expires_at.tzinfo is None:
                     expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-                # Compare
                 if expires_at > now:
-                    active_tokens.append(token)
-
-            return "GENERATED" if active_tokens else None
-
-        except Exception as e:
-            # Log the error but don't break the API
-            print(f"Error checking voting token for {self.student_id}: {e}")
+                    return "GENERATED"
             return None
-    
+        except Exception as e:
+            return None
+
     @property
-    def get_token_hash(self):
-        """Get the most recent active voting token hash for this electorate"""
+    def get_token_hash(self) -> Optional[str]:
+        """Return the hash of the most recent active token, or None."""
         tokens = self.__dict__.get("voting_tokens")
         if not tokens:
             return None
-
         now = datetime.now(timezone.utc)
-        active_tokens = []
-
+        active = []
         for token in tokens:
             if token.revoked or not token.is_active:
                 continue
-
             expires_at = token.expires_at
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
-
             if expires_at > now:
-                active_tokens.append(token)
-
-        if active_tokens:
-            return active_tokens[-1].token_hash
-
-        return None
+                active.append(token)
+        return active[-1].token_hash if active else None
 
     @property
     def has_token(self) -> bool:
-        """Check if the electorate has any active voting tokens"""
-        # Avoid calling voting_token which may trigger IO; use __dict__ check
         if self.__dict__.get("voting_tokens") is None:
             return False
         return self.voting_token is not None
@@ -143,15 +120,18 @@ class VotingToken(Base):
         primary_key=True, default=uuid.uuid4, index=True
     )
     electorate_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("students.id", ondelete="CASCADE"), 
-        nullable=False, 
-        index=True
+        ForeignKey("students.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     token_hash: Mapped[str] = mapped_column(
         String(1550), nullable=False, unique=True, index=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Counts how many times the token was *used to authenticate* (not how many votes cast)
     usage_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Counts consecutive failed verification attempts — used for auto-lockout
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
@@ -171,11 +151,27 @@ class VotingToken(Base):
     electorate: Mapped["Electorate"] = relationship(
         "Electorate", back_populates="voting_tokens"
     )
-    
-    @property
-    def update_usage_count(self):
+
+    def increment_failure(self, max_failures: int = 5) -> bool:
+        """
+        Increment the failure counter.
+        Returns True if the token should be auto-revoked (limit reached).
+        """
+        self.failure_count += 1
+        if self.failure_count >= max_failures:
+            self.revoked = True
+            self.revoked_at = datetime.now(timezone.utc)
+            self.revoked_reason = f"Auto-revoked after {max_failures} failed attempts"
+            self.is_active = False
+            return True
+        return False
+
+    def record_successful_use(self):
+        """Reset failure counter and record usage on successful authentication."""
+        self.failure_count = 0
         self.usage_count += 1
-        
+        self.last_used_at = datetime.now(timezone.utc)
+
 
 class VotingSession(Base):
     __tablename__ = "voting_sessions"
@@ -186,9 +182,9 @@ class VotingSession(Base):
     electorate_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("students.id", ondelete="CASCADE"),
         nullable=True,
-        index=True
+        index=True,
     )
-
+    # Always a UUID string — never an f-string; unique is enforced at DB level
     session_token: Mapped[str] = mapped_column(
         String(1550), nullable=False, unique=True, index=True
     )
@@ -224,13 +220,11 @@ class VotingSession(Base):
     )
 
     def update_activity(self, current_ip: str):
-        """Update session activity and IP address"""
         self.last_activity_at = datetime.now(timezone.utc)
         self.activity_count += 1
         self.ip_address = current_ip
 
     def terminate(self, reason: str = "logout"):
-        """Terminate the session"""
         self.is_valid = False
         self.terminated_at = datetime.now(timezone.utc)
         self.termination_reason = reason
@@ -273,9 +267,9 @@ class Candidate(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     portfolio_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("portfolios.id"), 
-        nullable=False, 
-        index=True
+        ForeignKey("portfolios.id"),
+        nullable=False,
+        index=True,
     )
     picture_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     picture_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -292,9 +286,9 @@ class Candidate(Base):
 
     # Relationships
     portfolio: Mapped["Portfolio"] = relationship(
-        "Portfolio", 
+        "Portfolio",
         back_populates="candidates",
-        lazy="selectin"
+        lazy="selectin",
     )
     votes: Mapped[list["Vote"]] = relationship(
         "Vote", back_populates="candidate", cascade="all, delete-orphan"
@@ -303,14 +297,27 @@ class Candidate(Base):
 
 class Vote(Base):
     __tablename__ = "votes"
+    __table_args__ = (
+        # DB-level guarantee: one vote per electorate per portfolio.
+        # This prevents double-voting even under concurrent requests —
+        # the database enforces it independently of application logic.
+        UniqueConstraint(
+            "electorate_id",
+            "portfolio_id",
+            name="uq_vote_electorate_portfolio",
+        ),
+        # Composite index for fast per-portfolio result aggregation
+        Index("ix_votes_portfolio_valid", "portfolio_id", "is_valid"),
+        Index("ix_votes_electorate_valid", "electorate_id", "is_valid"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4, index=True
     )
     electorate_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("students.id", ondelete="CASCADE"), 
-        nullable=False, 
-        index=True
+        ForeignKey("students.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     portfolio_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("portfolios.id"), nullable=False, index=True
@@ -336,9 +343,37 @@ class Vote(Base):
 
     # Relationships
     electorate: Mapped["Electorate"] = relationship(
-        "Electorate", 
-        back_populates="votes"
+        "Electorate", back_populates="votes"
     )
     portfolio: Mapped["Portfolio"] = relationship("Portfolio", back_populates="votes")
     candidate: Mapped["Candidate"] = relationship("Candidate", back_populates="votes")
     voting_session: Mapped[Optional["VotingSession"]] = relationship("VotingSession")
+
+
+class AuditLog(Base):
+    """
+    Append-only audit trail.  Never update or delete rows from this table.
+    Provides a tamper-evident record of all security-sensitive events.
+    """
+    __tablename__ = "audit_logs"
+    __table_args__ = (
+        Index("ix_audit_event_type", "event_type"),
+        Index("ix_audit_actor", "actor_id"),
+        Index("ix_audit_created", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    actor_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    resource_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    severity: Mapped[str] = mapped_column(String(20), default="INFO", nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )

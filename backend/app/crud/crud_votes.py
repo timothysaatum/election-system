@@ -1,11 +1,13 @@
 """
 CRUD operations for Vote management
+All election result queries use a single aggregated SQL query — no N+1.
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, and_, desc, case
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime, timezone
@@ -15,39 +17,40 @@ from app.schemas.electorates import VoteCreate
 
 
 async def create_vote(
-    db: AsyncSession, 
+    db: AsyncSession,
     vote_data: VoteCreate,
     electorate_id: UUID,
     voting_session_id: Optional[UUID],
     ip_address: str,
-    user_agent: str
+    user_agent: str,
 ) -> Vote:
-    """Create a new vote"""
+    """
+    Create a vote.  Raises IntegrityError if the DB UNIQUE constraint on
+    (electorate_id, portfolio_id) is violated — i.e. double-vote attempt.
+    The caller must handle IntegrityError separately from other exceptions.
+    """
     vote = Vote(
         electorate_id=electorate_id,
         portfolio_id=vote_data.portfolio_id,
         candidate_id=vote_data.candidate_id,
         voting_session_id=voting_session_id,
-        vote_type=vote_data.vote_type if hasattr(vote_data, 'vote_type') else "endorsed",
+        vote_type=getattr(vote_data, "vote_type", "endorsed"),
         ip_address=ip_address,
         user_agent=user_agent,
-        voted_at=datetime.now(timezone.utc)
+        voted_at=datetime.now(timezone.utc),
     )
     db.add(vote)
-    await db.commit()
-    await db.refresh(vote)
+    await db.flush()   # Let the constraint fire before commit
     return vote
 
 
 async def get_vote(db: AsyncSession, vote_id: UUID) -> Optional[Vote]:
-    """Get a vote by ID"""
     result = await db.execute(
         select(Vote)
         .options(
             selectinload(Vote.electorate),
             selectinload(Vote.portfolio),
             selectinload(Vote.candidate),
-            selectinload(Vote.voting_session)
         )
         .where(Vote.id == vote_id)
     )
@@ -55,78 +58,48 @@ async def get_vote(db: AsyncSession, vote_id: UUID) -> Optional[Vote]:
 
 
 async def get_votes_by_electorate(
-    db: AsyncSession, 
+    db: AsyncSession,
     electorate_id: UUID,
-    valid_only: bool = True
+    valid_only: bool = True,
 ) -> List[Vote]:
-    """Get all votes by an electorate"""
-    query = select(Vote).options(
-        selectinload(Vote.portfolio),
-        selectinload(Vote.candidate)
-    ).where(Vote.electorate_id == electorate_id)
-    
+    query = (
+        select(Vote)
+        .options(selectinload(Vote.portfolio), selectinload(Vote.candidate))
+        .where(Vote.electorate_id == electorate_id)
+    )
     if valid_only:
         query = query.where(Vote.is_valid == True)
-    
     query = query.order_by(desc(Vote.voted_at))
-    
-    result = await db.execute(query)
-    return result.scalars().all()
+    return (await db.execute(query)).scalars().all()
 
 
 async def get_votes_by_portfolio(
-    db: AsyncSession, 
+    db: AsyncSession,
     portfolio_id: UUID,
-    valid_only: bool = True
+    valid_only: bool = True,
 ) -> List[Vote]:
-    """Get all votes for a specific portfolio"""
-    query = select(Vote).options(
-        selectinload(Vote.electorate),
-        selectinload(Vote.candidate)
-    ).where(Vote.portfolio_id == portfolio_id)
-    
+    query = (
+        select(Vote)
+        .options(selectinload(Vote.electorate), selectinload(Vote.candidate))
+        .where(Vote.portfolio_id == portfolio_id)
+    )
     if valid_only:
         query = query.where(Vote.is_valid == True)
-    
-    query = query.order_by(desc(Vote.voted_at))
-    
-    result = await db.execute(query)
-    return result.scalars().all()
-
-
-async def get_votes_by_candidate(
-    db: AsyncSession, 
-    candidate_id: UUID,
-    valid_only: bool = True
-) -> List[Vote]:
-    """Get all votes for a specific candidate"""
-    query = select(Vote).options(
-        selectinload(Vote.electorate),
-        selectinload(Vote.portfolio)
-    ).where(Vote.candidate_id == candidate_id)
-    
-    if valid_only:
-        query = query.where(Vote.is_valid == True)
-    
-    query = query.order_by(desc(Vote.voted_at))
-    
-    result = await db.execute(query)
-    return result.scalars().all()
+    return (await db.execute(query)).scalars().all()
 
 
 async def check_electorate_voted_for_portfolio(
-    db: AsyncSession, 
-    electorate_id: UUID, 
-    portfolio_id: UUID
+    db: AsyncSession,
+    electorate_id: UUID,
+    portfolio_id: UUID,
 ) -> bool:
-    """Check if an electorate has already voted for a specific portfolio"""
     result = await db.execute(
         select(Vote.id)
         .where(
             and_(
                 Vote.electorate_id == electorate_id,
                 Vote.portfolio_id == portfolio_id,
-                Vote.is_valid == True
+                Vote.is_valid == True,
             )
         )
         .limit(1)
@@ -135,186 +108,171 @@ async def check_electorate_voted_for_portfolio(
 
 
 async def get_vote_count_by_candidate(
-    db: AsyncSession, 
-    candidate_id: UUID,
-    valid_only: bool = True
+    db: AsyncSession, candidate_id: UUID, valid_only: bool = True
 ) -> int:
-    """Get vote count for a specific candidate"""
     query = select(func.count(Vote.id)).where(Vote.candidate_id == candidate_id)
-    
     if valid_only:
         query = query.where(Vote.is_valid == True)
-    
-    result = await db.execute(query)
-    return result.scalar() or 0
+    return (await db.execute(query)).scalar() or 0
 
 
 async def get_vote_count_by_portfolio(
-    db: AsyncSession, 
-    portfolio_id: UUID,
-    valid_only: bool = True
+    db: AsyncSession, portfolio_id: UUID, valid_only: bool = True
 ) -> int:
-    """Get total vote count for a specific portfolio"""
     query = select(func.count(Vote.id)).where(Vote.portfolio_id == portfolio_id)
-    
     if valid_only:
         query = query.where(Vote.is_valid == True)
-    
-    result = await db.execute(query)
-    return result.scalar() or 0
+    return (await db.execute(query)).scalar() or 0
 
 
-async def get_election_results(db: AsyncSession, portfolio_id: UUID) -> Dict[str, Any]:
-    """Get election results for a specific portfolio"""
-    # Get portfolio info
-    portfolio_result = await db.execute(
-        select(Portfolio).where(Portfolio.id == portfolio_id)
-    )
-    portfolio = portfolio_result.scalar_one_or_none()
-    
-    if not portfolio:
-        return None
-    
-    # Get vote counts for each candidate (both endorsed and rejected)
-    vote_counts_result = await db.execute(
-        select(
-            Candidate.id,
-            Candidate.name,
-            Candidate.picture_url,
-            func.sum(case((Vote.vote_type == 'endorsed', 1), else_=0)).label('endorsed_votes'),
-            func.sum(case((Vote.vote_type == 'rejected', 1), else_=0)).label('rejected_votes'),
-            func.count(Vote.id).label('total_votes')
-        )
-        .join(Vote, Candidate.id == Vote.candidate_id)
-        .where(
-            and_(
-                Candidate.portfolio_id == portfolio_id,
-                Vote.is_valid == True
-            )
-        )
-        .group_by(Candidate.id, Candidate.name, Candidate.picture_url)
-        .order_by(desc(func.sum(case((Vote.vote_type == 'endorsed', 1), else_=0))))
-    )
-    
-    candidates = []
-    total_votes = 0
-    total_rejected = 0
-    winner = None
-    
-    for row in vote_counts_result:
-        endorsed_votes = int(row.endorsed_votes) if row.endorsed_votes else 0
-        rejected_votes = int(row.rejected_votes) if row.rejected_votes else 0
-        total_candidate_votes = endorsed_votes + rejected_votes
-        
-        candidate_data = {
-            'id': str(row.id),
-            'name': row.name,
-            'picture_url': row.picture_url,
-            'vote_count': endorsed_votes,
-            'rejected_count': rejected_votes,
-            'total_votes': total_candidate_votes
-        }
-        candidates.append(candidate_data)
-        total_votes += endorsed_votes
-        total_rejected += rejected_votes
-        
-        # First candidate (highest endorsed votes) is the winner
-        if winner is None:
-            winner = candidate_data
-    
-    return {
-        'portfolio_id': str(portfolio_id),
-        'portfolio_name': portfolio.name,
-        'total_votes': total_votes,
-        'total_rejected': total_rejected,
-        'candidates': candidates,
-        'winner': winner
-    }
-
+# ---------------------------------------------------------------------------
+# Election results — single aggregated query, no N+1
+# ---------------------------------------------------------------------------
 
 async def get_all_election_results(db: AsyncSession) -> List[Dict[str, Any]]:
-    """Get election results for all portfolios"""
-    # Get all active portfolios
-    portfolios_result = await db.execute(
-        select(Portfolio.id, Portfolio.name)
-        .where(Portfolio.is_active == True)
-        .order_by(Portfolio.voting_order, Portfolio.name)
-    )
-    portfolios = portfolios_result.all()
+    """
+    Return election results for all active portfolios in a SINGLE query.
 
-    results = []
-    for portfolio in portfolios:
-        result = await get_election_results(db, portfolio.id)
-        if result:
-            results.append(result)
+    Previously this called get_election_results() in a Python loop —
+    one query per portfolio.  This version uses a single LEFT OUTER JOIN
+    with GROUP BY so the database does all the aggregation.
 
-    return results
+    Result shape:
+        [{
+            portfolio_id, portfolio_name, total_votes, total_rejected,
+            candidates: [{id, name, picture_url, vote_count, rejected_count, total_votes}],
+            winner: { same shape }
+        }]
+    """
+    rows = (
+        await db.execute(
+            select(
+                Portfolio.id.label("portfolio_id"),
+                Portfolio.name.label("portfolio_name"),
+                Portfolio.voting_order,
+                Candidate.id.label("candidate_id"),
+                Candidate.name.label("candidate_name"),
+                Candidate.picture_url,
+                func.sum(
+                    case((Vote.vote_type == "endorsed", 1), else_=0)
+                ).label("endorsed"),
+                func.sum(
+                    case((Vote.vote_type == "rejected", 1), else_=0)
+                ).label("rejected"),
+            )
+            .select_from(Portfolio)
+            .join(Candidate, Candidate.portfolio_id == Portfolio.id)
+            .outerjoin(
+                Vote,
+                and_(Vote.candidate_id == Candidate.id, Vote.is_valid == True),
+            )
+            .where(Portfolio.is_active == True, Candidate.is_active == True)
+            .group_by(
+                Portfolio.id,
+                Portfolio.name,
+                Portfolio.voting_order,
+                Candidate.id,
+                Candidate.name,
+                Candidate.picture_url,
+            )
+            .order_by(Portfolio.voting_order, Portfolio.name, desc("endorsed"))
+        )
+    ).all()
+
+    # Group rows by portfolio
+    portfolio_map: Dict[str, Dict] = {}
+    for row in rows:
+        pid = str(row.portfolio_id)
+        endorsed = int(row.endorsed or 0)
+        rejected = int(row.rejected or 0)
+
+        if pid not in portfolio_map:
+            portfolio_map[pid] = {
+                "portfolio_id": pid,
+                "portfolio_name": row.portfolio_name,
+                "total_votes": 0,
+                "total_rejected": 0,
+                "candidates": [],
+                "winner": None,
+            }
+
+        candidate_data = {
+            "id": str(row.candidate_id),
+            "name": row.candidate_name,
+            "picture_url": row.picture_url,
+            "vote_count": endorsed,
+            "rejected_count": rejected,
+            "total_votes": endorsed + rejected,
+        }
+        portfolio_map[pid]["candidates"].append(candidate_data)
+        portfolio_map[pid]["total_votes"] += endorsed
+        portfolio_map[pid]["total_rejected"] += rejected
+
+        # First candidate per portfolio (already ordered by DESC endorsed)
+        if portfolio_map[pid]["winner"] is None:
+            portfolio_map[pid]["winner"] = candidate_data
+
+    return list(portfolio_map.values())
+
+
+async def get_election_results(db: AsyncSession, portfolio_id: UUID) -> Optional[Dict[str, Any]]:
+    """Single-portfolio results — delegates to the bulk query then filters."""
+    all_results = await get_all_election_results(db)
+    pid = str(portfolio_id)
+    return next((r for r in all_results if r["portfolio_id"] == pid), None)
 
 
 async def get_voting_statistics_engine(db: AsyncSession) -> Dict[str, Any]:
-    """Get overall voting statistics"""
-    # Total votes
-    total_votes_result = await db.execute(
-        select(func.count(Vote.id))
-    )
-    total_votes = total_votes_result.scalar() or 0
-
-    # Valid votes
-    valid_votes_result = await db.execute(
-        select(func.count(Vote.id))
-        .where(Vote.is_valid == True)
-    )
-    valid_votes = valid_votes_result.scalar() or 0
-
-    # Total electorates
-    total_electorates_result = await db.execute(
-        select(func.count(Electorate.id)).where(Electorate.is_deleted == False)
-    )
-    total_electorates = total_electorates_result.scalar() or 0
-
-    # Electorates who have voted
-    voted_electorates_result = await db.execute(
-        select(func.count(func.distinct(Vote.electorate_id)))
-        .where(Vote.is_valid == True)
-    )
-    voted_electorates = voted_electorates_result.scalar() or 0
-
-    # Votes by hour (for activity analysis)
-    votes_by_hour_result = await db.execute(
-        select(
-            func.extract('hour', Vote.voted_at).label('hour'),
-            func.count(Vote.id).label('vote_count')
+    """Overall voting statistics."""
+    total_votes = (await db.execute(select(func.count(Vote.id)))).scalar() or 0
+    valid_votes = (
+        await db.execute(select(func.count(Vote.id)).where(Vote.is_valid == True))
+    ).scalar() or 0
+    total_electorates = (
+        await db.execute(
+            select(func.count(Electorate.id)).where(Electorate.is_deleted == False)
         )
-        .where(Vote.is_valid == True)
-        .group_by(func.extract('hour', Vote.voted_at))
-        .order_by('hour')
-    )
-    votes_by_hour = [
-        {'hour': int(row.hour), 'vote_count': row.vote_count}
-        for row in votes_by_hour_result
-    ]
+    ).scalar() or 0
+    voted_electorates = (
+        await db.execute(
+            select(func.count(func.distinct(Vote.electorate_id))).where(Vote.is_valid == True)
+        )
+    ).scalar() or 0
+
+    votes_by_hour = (
+        await db.execute(
+            select(
+                func.extract("hour", Vote.voted_at).label("hour"),
+                func.count(Vote.id).label("vote_count"),
+            )
+            .where(Vote.is_valid == True)
+            .group_by(func.extract("hour", Vote.voted_at))
+            .order_by("hour")
+        )
+    ).all()
 
     return {
-        'total_votes': total_votes,
-        'valid_votes': valid_votes,
-        'invalid_votes': total_votes - valid_votes,
-        'total_electorates': total_electorates,
-        'voted_electorates': voted_electorates,
-        'voting_percentage': (voted_electorates / total_electorates * 100) if total_electorates > 0 else 0,
-        'votes_by_hour': votes_by_hour
+        "total_votes": total_votes,
+        "valid_votes": valid_votes,
+        "invalid_votes": total_votes - valid_votes,
+        "total_electorates": total_electorates,
+        "voted_electorates": voted_electorates,
+        "voting_percentage": (
+            round(voted_electorates / total_electorates * 100, 2)
+            if total_electorates > 0
+            else 0
+        ),
+        "votes_by_hour": [
+            {"hour": int(r.hour), "vote_count": r.vote_count} for r in votes_by_hour
+        ],
     }
 
 
 async def invalidate_vote(db: AsyncSession, vote_id: UUID, reason: str = "Invalidated") -> bool:
-    """Invalidate a vote"""
-    result = await db.execute(
-        select(Vote).where(Vote.id == vote_id)
-    )
+    result = await db.execute(select(Vote).where(Vote.id == vote_id))
     vote = result.scalar_one_or_none()
-
     if not vote:
         return False
-
     vote.is_valid = False
     await db.commit()
     return True
@@ -323,17 +281,12 @@ async def invalidate_vote(db: AsyncSession, vote_id: UUID, reason: str = "Invali
 async def get_recent_votes_engine(
     db: AsyncSession, limit: int = 50, valid_only: bool = True
 ) -> List[Vote]:
-    """Get recent votes for monitoring"""
     query = select(Vote).options(
         selectinload(Vote.electorate),
         selectinload(Vote.portfolio),
-        selectinload(Vote.candidate)
+        selectinload(Vote.candidate),
     )
-
     if valid_only:
         query = query.where(Vote.is_valid == True)
-
     query = query.order_by(desc(Vote.voted_at)).limit(limit)
-
-    result = await db.execute(query)
-    return result.scalars().all()
+    return (await db.execute(query)).scalars().all()

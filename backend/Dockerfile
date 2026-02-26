@@ -42,7 +42,14 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=appuser:appuser . .
 
 # Create necessary directories
-RUN mkdir -p /app/uploads /app/logs && \
+# Subdirectories under /app/uploads must be pre-created here so that when
+# Docker mounts the election_uploads named volume over /app/uploads at runtime,
+# it initialises those subdirectories with appuser ownership.  Without this,
+# the volume is root-owned and appuser gets PermissionError on os.makedirs().
+RUN mkdir -p \
+    /app/uploads/candidates \
+    /app/uploads/temp \
+    /app/logs && \
     chown -R appuser:appuser /app
 
 # Set environment variables
