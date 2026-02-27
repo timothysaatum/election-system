@@ -70,6 +70,9 @@ services:
       #   • breaks when the host path doesn't exist on another machine
       # Run `docker compose build backend` to rebuild after code changes.
       # Alembic migrations: run via `docker compose exec backend alembic upgrade head`
+      # Bind-mount migrations/versions so files generated inside the container
+      # are written directly to the host — they survive rebuilds and can be committed.
+      - ./backend/app/core/migrations/versions:/app/app/core/migrations/versions:rw
     restart: unless-stopped
     networks:
       - kratos_network
