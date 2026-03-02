@@ -29,8 +29,26 @@ const ECOfficial = () => {
   const loadElectorates = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.getElectorates(0, 1000);
-      setElectorates(Array.isArray(data) ? data : []);
+      // Paginated fetch to load all records regardless of total count
+      const pageSize = 500;
+      let skip = 0;
+      let allElectorates = [];
+      let hasMore = true;
+
+      while (hasMore) {
+        const batch = await api.getElectorates(skip, pageSize);
+        if (!batch || batch.length === 0) {
+          hasMore = false;
+        } else {
+          allElectorates = [...allElectorates, ...batch];
+          skip += pageSize;
+          if (batch.length < pageSize) {
+            hasMore = false;
+          }
+        }
+      }
+
+      setElectorates(allElectorates);
     } catch (err) {
       console.error("Failed to load electorates:", err);
       toast.showError("Failed to load voters: " + err.message);

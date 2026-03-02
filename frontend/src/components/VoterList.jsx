@@ -28,7 +28,7 @@ export const VoterList = ({
 
   // Search and filter state
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all"); // all, has_token, no_token, voted
+  const [statusFilter, setStatusFilter] = useState("all");
   const [programFilter, setProgramFilter] = useState("all");
 
   // Get unique programs for filter

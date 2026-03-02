@@ -1,6 +1,5 @@
 """
-Offline Admin Router
-Admin operations for offline voting system.
+Admin Router
 All data-mutating and sensitive read endpoints require 'admin' role.
 Statistics / results can be accessed by any authenticated role.
 """

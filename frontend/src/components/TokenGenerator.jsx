@@ -30,8 +30,27 @@ const TokenGeneratorPage = () => {
   const loadElectorates = async () => {
     setLoading(true);
     try {
-      const data = await api.getElectorates(0, 1000);
-      setElectorates(data);
+      // Paginated fetch to load all records regardless of total count
+      const pageSize = 500;
+      let skip = 0;
+      let allElectorates = [];
+      let hasMore = true;
+
+      while (hasMore) {
+        const batch = await api.getElectorates(skip, pageSize);
+        if (!batch || batch.length === 0) {
+          hasMore = false;
+        } else {
+          allElectorates = [...allElectorates, ...batch];
+          skip += pageSize;
+          // If we got fewer records than requested, we've reached the end
+          if (batch.length < pageSize) {
+            hasMore = false;
+          }
+        }
+      }
+
+      setElectorates(allElectorates);
     } catch (error) {
       console.error("Failed to load electorates:", error);
       alert("Failed to load voters. Please try again.");
@@ -76,8 +95,6 @@ const TokenGeneratorPage = () => {
   const filteredElectorates = electorates.filter((e) => {
     const matchesSearch =
       e.student_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (e.name &&
-        e.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (e.full_name &&
         e.full_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (e.program && e.program.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -205,7 +222,7 @@ const TokenGeneratorPage = () => {
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
                             <h3 className="font-semibold text-gray-900">
-                              {electorate.name || electorate.full_name || electorate.student_id}
+                              {electorate.full_name || electorate.student_id}
                             </h3>
                             {electorate.has_voted && (
                               <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded-full">
@@ -293,7 +310,7 @@ const TokenGeneratorPage = () => {
                     >
                       <div className="mb-3">
                         <p className="font-semibold text-gray-900">
-                          {item.electorate.name || item.electorate.full_name ||
+                          {item.electorate.full_name ||
                             item.electorate.student_id}
                         </p>
                         <p className="text-sm text-gray-600">

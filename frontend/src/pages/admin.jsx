@@ -34,6 +34,29 @@ const Admin = () => {
 
   const loadData = useCallback(async () => {
     try {
+      // Paginated fetch for electorates to load all records regardless of total count
+      const fetchAllElectorates = async () => {
+        const pageSize = 500;
+        let skip = 0;
+        let allElectorates = [];
+        let hasMore = true;
+
+        while (hasMore) {
+          const batch = await api.getElectorates(skip, pageSize);
+          if (!batch || batch.length === 0) {
+            hasMore = false;
+          } else {
+            allElectorates = [...allElectorates, ...batch];
+            skip += pageSize;
+            if (batch.length < pageSize) {
+              hasMore = false;
+            }
+          }
+        }
+
+        return allElectorates;
+      };
+
       const [
         statsData,
         portfoliosData,
@@ -44,7 +67,7 @@ const Admin = () => {
         api.getStatistics().catch(() => null),
         api.getPortfolios().catch(() => []),
         api.getCandidates().catch(() => []),
-        api.getElectorates(0, 1000).catch(() => []),
+        fetchAllElectorates().catch(() => []),
         api.getResults().catch(() => []),
       ]);
 
@@ -195,7 +218,7 @@ const Admin = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Kratos Admin</h1>
+              <h1 className="text-2xl font-bold text-gray-900">Electoral Commissioner</h1>
               <p className="text-sm text-gray-600">
                 Welcome, {adminData?.username} <span className="text-blue-600 font-medium">(Admin)</span>
               </p>
@@ -282,7 +305,7 @@ const Admin = () => {
       <footer className="bg-white border-t border-gray-200 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <p className="text-center text-sm text-gray-500">
-            Election Management System © 2025
+            Election Management System © 2026
           </p>
         </div>
       </footer>
