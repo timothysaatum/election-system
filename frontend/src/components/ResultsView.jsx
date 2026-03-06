@@ -1,175 +1,348 @@
-import { Trophy, TrendingUp, Printer, Award, BarChart3, Users } from 'lucide-react';
-import { useMemo, useState, useRef } from 'react';
+import { Trophy, TrendingUp, Printer, Award, BarChart3, Users, CheckCircle, XCircle, MinusCircle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const getImageUrl = (url) => {
+  if (!url) return null;
+  if (url.startsWith('http')) return url;
+  return url.startsWith('/') ? url : `/${url}`;
+};
+
+/**
+ * A portfolio is a "single candidate" (endorsement-style) vote when it has
+ * exactly one active candidate.  Display changes to Endorse / Reject counts.
+ */
+const isSingleCandidate = (result) => result.candidates.length === 1;
+
+/**
+ * A winner is only valid if at least one vote has been cast.
+ * This prevents the first-added candidate being shown as winner at 0 votes.
+ */
+const resolveWinner = (result) => {
+  if (!result.winner) return null;
+  if (result.total_votes === 0) return null;
+  // Guard: winner must have actually received more than 0 endorsed votes
+  if ((result.winner.vote_count || 0) === 0) return null;
+  return result.winner;
+};
+
+// ---------------------------------------------------------------------------
+// Single-candidate card (endorsement vote)
+// ---------------------------------------------------------------------------
+
+const SingleCandidateResult = ({ result }) => {
+  const candidate = result.candidates[0];
+  const endorsed = candidate.vote_count || 0;
+  const rejected = candidate.rejected_count || 0;
+  const abstained = candidate.abstain_count || 0;
+  const total = endorsed + rejected + abstained || 1; // avoid /0
+  const endorsedPct = ((endorsed / total) * 100).toFixed(1);
+  const rejectedPct = ((rejected / total) * 100).toFixed(1);
+  const passed = endorsed > rejected && result.total_votes > 0;
+  const hasVotes = result.total_votes > 0;
+
+  return (
+    <div className="mt-4">
+      {/* Candidate identity */}
+      <div className="flex items-center gap-4 mb-5 p-4 bg-slate-50 rounded-xl border border-slate-200">
+        {candidate.picture_url ? (
+          <img
+            src={getImageUrl(candidate.picture_url)}
+            alt={candidate.name}
+            className="h-16 w-16 rounded-2xl object-cover border-2 border-slate-200 flex-shrink-0"
+            onError={(e) => { e.target.style.display = 'none'; }}
+          />
+        ) : (
+          <div className="h-16 w-16 rounded-2xl bg-slate-200 flex items-center justify-center flex-shrink-0">
+            <Users className="h-8 w-8 text-slate-400" />
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <p className="font-bold text-lg text-slate-900 truncate">{candidate.name}</p>
+          {hasVotes && (
+            <span className={`inline-flex items-center gap-1.5 mt-1 px-2.5 py-1 rounded-full text-xs font-bold ${passed
+                ? 'bg-green-100 text-green-700 border border-green-200'
+                : 'bg-red-100 text-red-700 border border-red-200'
+              }`}>
+              {passed ? <CheckCircle className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+              {passed ? 'Endorsed' : 'Not Endorsed'}
+            </span>
+          )}
+          {!hasVotes && (
+            <span className="inline-flex items-center gap-1.5 mt-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+              No votes yet
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Endorse / Reject / Abstain counts */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="p-4 bg-green-50 border-2 border-green-200 rounded-xl text-center">
+          <CheckCircle className="h-6 w-6 text-green-600 mx-auto mb-1" />
+          <p className="text-2xl font-bold text-green-700 metric-number">{endorsed}</p>
+          <p className="text-xs font-semibold text-green-600 uppercase tracking-wide mt-0.5">Endorsed</p>
+          {hasVotes && <p className="text-xs text-green-500 metric-number mt-0.5">{endorsedPct}%</p>}
+        </div>
+        <div className="p-4 bg-red-50 border-2 border-red-200 rounded-xl text-center">
+          <XCircle className="h-6 w-6 text-red-500 mx-auto mb-1" />
+          <p className="text-2xl font-bold text-red-600 metric-number">{rejected}</p>
+          <p className="text-xs font-semibold text-red-500 uppercase tracking-wide mt-0.5">Rejected</p>
+          {hasVotes && <p className="text-xs text-red-400 metric-number mt-0.5">{rejectedPct}%</p>}
+        </div>
+        <div className="p-4 bg-slate-50 border-2 border-slate-200 rounded-xl text-center">
+          <MinusCircle className="h-6 w-6 text-slate-400 mx-auto mb-1" />
+          <p className="text-2xl font-bold text-slate-500 metric-number">{abstained}</p>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mt-0.5">Abstained</p>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      {hasVotes && (
+        <div className="mt-4">
+          <div className="flex h-3 rounded-full overflow-hidden bg-slate-200 shadow-inner">
+            <div
+              className="bg-gradient-to-r from-green-500 to-green-600 transition-all duration-700"
+              style={{ width: `${endorsedPct}%` }}
+              title={`Endorsed: ${endorsedPct}%`}
+            />
+            <div
+              className="bg-gradient-to-r from-red-400 to-red-500 transition-all duration-700"
+              style={{ width: `${rejectedPct}%` }}
+              title={`Rejected: ${rejectedPct}%`}
+            />
+          </div>
+          <div className="flex justify-between mt-1 text-xs text-slate-400">
+            <span className="text-green-600 font-medium">{endorsedPct}% endorse</span>
+            <span className="text-red-500 font-medium">{rejectedPct}% reject</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Multi-candidate card (competitive vote)
+// ---------------------------------------------------------------------------
+
+const MultiCandidateResult = ({ result }) => {
+  const winner = resolveWinner(result);
+  const hasVotes = result.total_votes > 0;
+
+  return (
+    <div className="mt-4">
+      {/* Winner banner — only shown when votes exist and there's a real winner */}
+      {winner && (
+        <div className="bg-gradient-to-br from-amber-50 via-yellow-50 to-amber-50 border-2 border-amber-300 rounded-xl p-4 mb-4 relative overflow-hidden">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 opacity-20">
+            <Trophy className="h-24 w-24 text-amber-400" />
+          </div>
+          <div className="relative z-10 flex items-center gap-3">
+            <Trophy className="h-5 w-5 text-amber-600 flex-shrink-0" />
+            <p className="text-xs font-bold text-amber-800 uppercase tracking-wider flex-shrink-0">Winner</p>
+            {winner.picture_url ? (
+              <img
+                src={getImageUrl(winner.picture_url)}
+                alt={winner.name}
+                className="h-10 w-10 rounded-xl object-cover border-2 border-white shadow flex-shrink-0"
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+            ) : (
+              <div className="h-10 w-10 rounded-xl bg-amber-200 flex items-center justify-center flex-shrink-0">
+                <Trophy className="h-5 w-5 text-amber-700" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-slate-900 truncate">{winner.name}</p>
+              <p className="text-xs text-amber-700 metric-number">
+                {winner.vote_count} votes · {((winner.vote_count / result.total_votes) * 100).toFixed(1)}%
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Candidate list */}
+      <div className="space-y-2">
+        {result.candidates.map((candidate, idx) => {
+          // Safe winner check — backend may use .id or candidate_id
+          const winnerId = winner?.id || winner?.candidate_id;
+          const candidateId = candidate.id || candidate.candidate_id;
+          const isLeader = winnerId && candidateId === winnerId;
+          const votes = candidate.vote_count || 0;
+          const pct = hasVotes ? ((votes / result.total_votes) * 100).toFixed(1) : 0;
+
+          return (
+            <div
+              key={candidate.id || idx}
+              className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${isLeader
+                  ? 'bg-amber-50 border-amber-200'
+                  : 'bg-slate-50 border-transparent'
+                }`}
+            >
+              {/* Rank */}
+              <span className={`text-sm font-bold w-6 flex-shrink-0 ${isLeader ? 'text-amber-600' : 'text-slate-400'}`}>
+                #{idx + 1}
+              </span>
+
+              {/* Photo */}
+              {candidate.picture_url ? (
+                <img
+                  src={getImageUrl(candidate.picture_url)}
+                  alt={candidate.name}
+                  className={`h-10 w-10 rounded-xl object-cover flex-shrink-0 border-2 ${isLeader ? 'border-amber-300' : 'border-slate-200'}`}
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              ) : (
+                <div className={`h-10 w-10 rounded-xl flex items-center justify-center flex-shrink-0 ${isLeader ? 'bg-amber-100 border-2 border-amber-300' : 'bg-slate-200'}`}>
+                  <Users className={`h-5 w-5 ${isLeader ? 'text-amber-600' : 'text-slate-400'}`} />
+                </div>
+              )}
+
+              {/* Name + bar */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className={`font-semibold text-sm truncate ${isLeader ? 'text-slate-900' : 'text-slate-700'}`}>
+                    {candidate.name}
+                  </span>
+                  <span className={`text-sm font-bold metric-number flex-shrink-0 ${isLeader ? 'text-amber-700' : 'text-slate-600'}`}>
+                    {votes} {hasVotes && <span className="text-xs font-normal text-slate-400">({pct}%)</span>}
+                  </span>
+                </div>
+                {/* Inline bar */}
+                <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ${isLeader ? 'bg-amber-500' : 'bg-slate-400'}`}
+                    style={{ width: hasVotes ? `${pct}%` : '0%' }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* No votes yet state */}
+      {!hasVotes && (
+        <p className="text-center text-xs text-slate-400 mt-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+          No votes cast yet — results will appear here during voting
+        </p>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Main ResultsView
+// ---------------------------------------------------------------------------
 
 export const ResultsView = ({ results }) => {
-  const [selectedPortfolio, setSelectedPortfolio] = useState(null);
-  const printRef = useRef();
+  const stats = useMemo(() => {
+    const totalVotes = results.reduce((sum, r) => sum + (r.total_votes || 0), 0);
+    const totalPortfolios = results.length;
+    // Only count genuine winners (votes > 0)
+    const winners = results.filter(r => resolveWinner(r) !== null).length;
+    return {
+      totalVotes,
+      totalPortfolios,
+      winners,
+      avgVotesPerPortfolio: totalPortfolios ? Math.round(totalVotes / totalPortfolios) : 0,
+    };
+  }, [results]);
 
   const handlePrint = () => {
     const printWindow = window.open('', '', 'height=600,width=900');
+    if (!printWindow) return;
 
     const htmlContent = `
       <html>
         <head>
-          <title>Election Results - Print</title>
+          <title>Election Results</title>
           <style>
-            body { font-family: Arial, sans-serif; margin: 20px; }
-            h1 { text-align: center; color: #333; margin-bottom: 20px; }
-            .summary { margin-bottom: 30px; padding: 15px; background-color: #f5f5f5; border-radius: 5px; }
-            .portfolio-section { page-break-inside: avoid; margin-bottom: 30px; border: 1px solid #ddd; padding: 15px; border-radius: 5px; }
-            .portfolio-title { font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px; }
-            .winner-section { background-color: #fff8e1; border: 2px solid #ffd600; padding: 15px; border-radius: 5px; margin-bottom: 15px; }
-            .winner-badge { color: #f57f17; font-weight: bold; font-size: 14px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-            th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
-            th { background-color: #0066cc; color: white; font-weight: bold; }
-            tr:nth-child(even) { background-color: #f9f9f9; }
-            .vote-percentage { font-weight: bold; color: #0066cc; }
-            @media print {
-              body { margin: 10px; }
-              .portfolio-section { page-break-inside: avoid; }
-            }
+            body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
+            h1 { text-align: center; margin-bottom: 20px; }
+            .summary { margin-bottom: 30px; padding: 15px; background: #f5f5f5; border-radius: 5px; }
+            .portfolio { page-break-inside: avoid; margin-bottom: 30px; border: 1px solid #ddd; padding: 15px; border-radius: 5px; }
+            .portfolio-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+            .winner { background: #fff8e1; border: 2px solid #ffd600; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+            th { background: #0066cc; color: white; }
+            .no-votes { color: #999; font-style: italic; }
           </style>
         </head>
         <body>
           <h1>Election Results Report</h1>
           <div class="summary">
             <p><strong>Total Votes:</strong> ${stats.totalVotes}</p>
-            <p><strong>Total Portfolios:</strong> ${stats.totalPortfolios}</p>
+            <p><strong>Portfolios:</strong> ${stats.totalPortfolios}</p>
             <p><strong>Winners Determined:</strong> ${stats.winners}</p>
-            <p><strong>Average Votes per Portfolio:</strong> ${stats.avgVotesPerPortfolio}</p>
-            <p><strong>Generated on:</strong> ${new Date().toLocaleString()}</p>
+            <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
           </div>
-          ${results.map((result, idx) => `
-            <div class="portfolio-section">
-              <div class="portfolio-title">${idx + 1}. ${result.portfolio_name}</div>
-              <p><strong>Total Votes:</strong> ${result.total_votes}</p>
-              <p><strong>Total Rejected:</strong> ${result.total_rejected}</p>
-              
-              ${result.winner ? `
-                <div class="winner-section">
-                  <div class="winner-badge">🏆 WINNER</div>
-                  <p><strong>${result.winner.name}</strong></p>
-                  <p>Endorsed: ${result.winner.vote_count} | Rejected: ${result.winner.rejected_count || 0}</p>
-                </div>
-              ` : ''}
-              
-              <table>
-                <thead>
-                  <tr>
-                    <th>Rank</th>
-                    <th>Candidate Name</th>
-                    <th>Endorsed</th>
-                    <th>Rejected</th>
-                    <th>Percentage</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${result.candidates.map((c, i) => `
+          ${results.map((result, idx) => {
+      const winner = resolveWinner(result);
+      const single = isSingleCandidate(result);
+      return `
+              <div class="portfolio">
+                <div class="portfolio-title">${idx + 1}. ${result.portfolio_name}</div>
+                ${result.total_votes === 0
+          ? '<p class="no-votes">No votes cast yet</p>'
+          : `<p><strong>Total Votes:</strong> ${result.total_votes}</p>`
+        }
+                ${winner ? `<div class="winner">🏆 <strong>Winner: ${winner.name}</strong> — ${winner.vote_count} votes</div>` : ''}
+                <table>
+                  <thead>
                     <tr>
-                      <td>#${i + 1}</td>
-                      <td>${c.name}</td>
-                      <td>${c.vote_count || 0}</td>
-                      <td>${c.rejected_count || 0}</td>
-                      <td class="vote-percentage">${result.total_votes > 0 ? ((c.vote_count / result.total_votes) * 100).toFixed(1) : 0}%</td>
+                      <th>Candidate</th>
+                      ${single ? '<th>Endorsed</th><th>Rejected</th>' : '<th>Votes</th><th>%</th>'}
                     </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-          `).join('')}
+                  </thead>
+                  <tbody>
+                    ${result.candidates.map(c => `
+                      <tr>
+                        <td>${c.name}</td>
+                        ${single
+            ? `<td>${c.vote_count || 0}</td><td>${c.rejected_count || 0}</td>`
+            : `<td>${c.vote_count || 0}</td><td>${result.total_votes > 0 ? ((c.vote_count / result.total_votes) * 100).toFixed(1) : 0}%</td>`
+          }
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `;
+    }).join('')}
         </body>
       </html>
     `;
 
-    if (printWindow) {
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-      setTimeout(() => printWindow.print(), 250);
-    }
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+    setTimeout(() => printWindow.print(), 250);
   };
-
-  const getImageUrl = (url) => {
-    if (!url) return null;
-    if (url.startsWith('http')) return url;
-    const cleanUrl = url.startsWith('/') ? url : `/${url}`;
-    return cleanUrl;
-  };
-
-  const stats = useMemo(() => {
-    const totalVotes = results.reduce((sum, r) => sum + r.total_votes, 0);
-    const totalPortfolios = results.length;
-    const winnerData = results.map(r => r.winner).filter(Boolean);
-    return {
-      totalVotes,
-      totalPortfolios,
-      winners: winnerData.length,
-      avgVotesPerPortfolio: totalPortfolios ? Math.round(totalVotes / totalPortfolios) : 0,
-    };
-  }, [results]);
 
   return (
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
-        
-        * {
-          font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-        }
-        
-        .metric-number {
-          font-family: 'JetBrains Mono', monospace;
-        }
-        
+        * { font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; }
+        .metric-number { font-family: 'JetBrains Mono', monospace; }
         @keyframes slideIn {
-          from {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
         }
-        
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        
-        @keyframes trophy-shine {
-          0%, 100% { opacity: 0.2; }
-          50% { opacity: 0.4; }
-        }
-        
-        .result-card {
-          animation: slideIn 0.4s ease-out;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        
-        .result-card:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 20px 40px -10px rgba(0,0,0,0.15);
-        }
-        
-        .trophy-bg {
-          animation: trophy-shine 3s ease-in-out infinite;
-        }
-        
-        .stat-box {
-          transition: all 0.2s ease;
-        }
-        
-        .stat-box:hover {
-          transform: scale(1.03);
-        }
-        
-        .progress-segment {
-          transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-        }
+        .result-card { animation: slideIn 0.4s ease-out; transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
+        .result-card:hover { transform: translateY(-4px); box-shadow: 0 20px 40px -10px rgba(0,0,0,0.15); }
+        .stat-box { transition: all 0.2s ease; }
+        .stat-box:hover { transform: scale(1.03); }
       `}</style>
 
       <div className="bg-gradient-to-br from-white via-amber-50/30 to-white rounded-2xl shadow-xl p-6 border border-slate-200">
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div>
@@ -193,208 +366,69 @@ export const ResultsView = ({ results }) => {
           <button
             onClick={handlePrint}
             className="flex items-center gap-2 px-5 py-2 bg-white border-2 border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 hover:border-slate-400 transition-all font-semibold shadow-sm"
-            title="Print Results"
           >
             <Printer className="h-4 w-4" />
             Print Report
           </button>
         </div>
 
-        {/* Stats Grid */}
+        {/* Stats */}
         {results.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <div className="stat-box p-5 bg-gradient-to-br from-amber-50 to-yellow-100/50 rounded-xl border-2 border-amber-200">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-amber-700 uppercase">Total Votes</p>
-                <BarChart3 className="h-8 w-8 text-amber-600" />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {[
+              { label: 'Total Votes', value: stats.totalVotes.toLocaleString(), icon: BarChart3, color: 'amber' },
+              { label: 'Portfolios', value: stats.totalPortfolios, icon: Award, color: 'blue' },
+              { label: 'Winners', value: stats.winners, icon: Trophy, color: 'green' },
+              { label: 'Avg/Portfolio', value: stats.avgVotesPerPortfolio, icon: Users, color: 'purple' },
+            ].map(({ label, value, icon: Icon, color }) => (
+              <div key={label} className={`stat-box p-5 bg-gradient-to-br from-${color}-50 to-${color}-100/50 rounded-xl border-2 border-${color}-200`}>
+                <div className="flex items-center justify-between mb-2">
+                  <p className={`text-xs font-semibold text-${color}-700 uppercase`}>{label}</p>
+                  <Icon className={`h-8 w-8 text-${color}-600`} />
+                </div>
+                <p className={`text-3xl font-bold text-${color}-900 metric-number`}>{value}</p>
               </div>
-              <p className="text-3xl font-bold text-amber-900 metric-number">{stats.totalVotes.toLocaleString()}</p>
-            </div>
-            <div className="stat-box p-5 bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl border-2 border-blue-200">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-blue-700 uppercase">Portfolios</p>
-                <Award className="h-8 w-8 text-blue-600" />
-              </div>
-              <p className="text-3xl font-bold text-blue-900 metric-number">{stats.totalPortfolios}</p>
-            </div>
-            <div className="stat-box p-5 bg-gradient-to-br from-green-50 to-green-100/50 rounded-xl border-2 border-green-200">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-green-700 uppercase">Winners</p>
-                <Trophy className="h-8 w-8 text-green-600" />
-              </div>
-              <p className="text-3xl font-bold text-green-900 metric-number">{stats.winners}</p>
-            </div>
-            <div className="stat-box p-5 bg-gradient-to-br from-purple-50 to-purple-100/50 rounded-xl border-2 border-purple-200">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-purple-700 uppercase">Avg/Portfolio</p>
-                <Users className="h-8 w-8 text-purple-600" />
-              </div>
-              <p className="text-3xl font-bold text-purple-900 metric-number">{stats.avgVotesPerPortfolio}</p>
-            </div>
+            ))}
           </div>
         )}
 
-        {/* Results Grid */}
+        {/* Cards */}
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
           {results.map((result, index) => (
             <div
               key={result.portfolio_id}
-              className="result-card border-2 border-slate-200 rounded-2xl p-6 bg-white shadow-sm cursor-pointer"
-              style={{ animationDelay: `${index * 0.1}s` }}
-              onClick={() => setSelectedPortfolio(selectedPortfolio === result.portfolio_id ? null : result.portfolio_id)}
+              className="result-card border-2 border-slate-200 rounded-2xl p-6 bg-white shadow-sm"
+              style={{ animationDelay: `${index * 0.08}s` }}
             >
-              {/* Portfolio Header */}
-              <div className="mb-5">
-                <div className="flex items-center gap-2 mb-2">
-                  <Award className="h-5 w-5 text-slate-600" />
-                  <h3 className="text-xl font-bold text-slate-900">{result.portfolio_name}</h3>
+              {/* Portfolio header */}
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="flex items-center gap-2">
+                  <Award className="h-5 w-5 text-slate-500 flex-shrink-0" />
+                  <h3 className="text-lg font-bold text-slate-900 leading-tight">{result.portfolio_name}</h3>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 px-3 py-2 rounded-lg inline-flex">
-                  <TrendingUp className="h-4 w-4" />
-                  <span className="font-semibold metric-number">{result.total_votes}</span>
-                  <span>Total Votes</span>
-                </div>
+                {isSingleCandidate(result) && (
+                  <span className="flex-shrink-0 px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full border border-blue-200">
+                    Endorsement
+                  </span>
+                )}
               </div>
 
-              {/* Winner Section */}
-              {result.winner && (
-                <div className="bg-gradient-to-br from-amber-50 via-yellow-50 to-amber-50 border-2 border-amber-300 rounded-xl p-5 mb-5 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 -mt-4 -mr-4">
-                    <Trophy className="h-24 w-24 text-amber-400 trophy-bg" />
-                  </div>
-                  <div className="relative z-10">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Trophy className="h-5 w-5 text-amber-600" />
-                      <p className="text-xs font-bold text-amber-800 uppercase tracking-wider">Winner</p>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      {result.winner.picture_url ? (
-                        <img
-                          src={getImageUrl(result.winner.picture_url)}
-                          alt={result.winner.name}
-                          className="h-16 w-16 rounded-2xl object-cover border-4 border-white shadow-lg flex-shrink-0"
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-amber-200 to-amber-300 flex items-center justify-center border-4 border-white shadow-lg flex-shrink-0">
-                          <Trophy className="h-8 w-8 text-amber-700" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-lg text-slate-900 truncate">{result.winner.name}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-sm font-bold text-amber-700 metric-number">{result.winner.vote_count}</span>
-                          <span className="text-sm text-slate-600">votes</span>
-                          <span className="text-xs text-slate-500">
-                            ({result.total_votes > 0 ? ((result.winner.vote_count / result.total_votes) * 100).toFixed(1) : 0}%)
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* All Candidates */}
-              <div className="space-y-2.5">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">All Candidates</p>
-                {result.candidates.map((candidate, index) => {
-                  const isWinner = result.winner && candidate.id === result.winner.id;
-                  const endorsedVotes = candidate.vote_count || 0;
-                  const rejectedVotes = candidate.rejected_count || 0;
-                  const portfolioTotal = result.total_votes || 0;
-                  const percentage = portfolioTotal > 0 ? ((endorsedVotes / portfolioTotal) * 100).toFixed(1) : 0;
-
-                  return (
-                    <div
-                      key={candidate.id}
-                      className={`flex items-center justify-between p-3.5 rounded-xl transition-all ${isWinner
-                        ? 'bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-200'
-                        : 'bg-slate-50 hover:bg-slate-100 border-2 border-transparent'
-                        }`}
-                    >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <span className={`text-sm font-bold flex-shrink-0 w-6 ${isWinner ? 'text-amber-600' : 'text-slate-400'
-                          }`}>
-                          #{index + 1}
-                        </span>
-                        {candidate.picture_url ? (
-                          <img
-                            src={getImageUrl(candidate.picture_url)}
-                            alt={candidate.name}
-                            className={`h-10 w-10 rounded-xl object-cover flex-shrink-0 border-2 ${isWinner ? 'border-amber-300' : 'border-slate-200'
-                              }`}
-                            onError={(e) => {
-                              e.target.style.display = 'none';
-                            }}
-                          />
-                        ) : (
-                          <div className={`h-10 w-10 rounded-xl flex items-center justify-center flex-shrink-0 ${isWinner ? 'bg-amber-100 border-2 border-amber-300' : 'bg-slate-200'
-                            }`}>
-                            <Users className={`h-5 w-5 ${isWinner ? 'text-amber-600' : 'text-slate-400'}`} />
-                          </div>
-                        )}
-                        <span className={`font-semibold truncate text-sm ${isWinner ? 'text-slate-900' : 'text-slate-700'
-                          }`}>
-                          {candidate.name}
-                        </span>
-                      </div>
-                      <div className="text-right flex-shrink-0 ml-3">
-                        <div className="flex gap-4 items-end justify-end">
-                          <div>
-                            <p className={`text-lg font-bold metric-number ${isWinner ? 'text-green-700' : 'text-green-600'
-                              }`}>
-                              {endorsedVotes}
-                            </p>
-                            <p className="text-xs text-green-600 metric-number font-medium">endorsed</p>
-                          </div>
-                          <div>
-                            <p className="text-lg font-bold metric-number text-red-600">
-                              {rejectedVotes}
-                            </p>
-                            <p className="text-xs text-red-600 metric-number font-medium">rejected</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
+                <TrendingUp className="h-3.5 w-3.5" />
+                <span className="font-semibold metric-number">{result.total_votes}</span>
+                <span>votes cast</span>
               </div>
 
-              {/* Progress Bar */}
-              {result.total_votes > 0 && (
-                <div className="mt-5 pt-5 border-t-2 border-slate-100">
-                  <p className="text-xs font-semibold text-slate-500 uppercase mb-3">Vote Distribution</p>
-                  <div className="flex h-3 rounded-full overflow-hidden bg-slate-200 shadow-inner">
-                    {result.candidates.map((candidate, index) => {
-                      const percentage = (candidate.vote_count / result.total_votes) * 100;
-                      const colors = [
-                        'bg-gradient-to-r from-blue-500 to-blue-600',
-                        'bg-gradient-to-r from-green-500 to-green-600',
-                        'bg-gradient-to-r from-purple-500 to-purple-600',
-                        'bg-gradient-to-r from-orange-500 to-orange-600',
-                        'bg-gradient-to-r from-pink-500 to-pink-600',
-                        'bg-gradient-to-r from-indigo-500 to-indigo-600',
-                      ];
-                      return (
-                        <div
-                          key={candidate.id}
-                          className={`progress-segment ${colors[index % colors.length]}`}
-                          style={{ width: `${percentage}%` }}
-                          title={`${candidate.name}: ${percentage.toFixed(1)}%`}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              {/* Body — differs by single vs multi */}
+              {isSingleCandidate(result)
+                ? <SingleCandidateResult result={result} />
+                : <MultiCandidateResult result={result} />
+              }
             </div>
           ))}
         </div>
 
-        {/* Empty State */}
+        {/* Empty state */}
         {results.length === 0 && (
           <div className="text-center py-20">
             <div className="inline-flex p-5 bg-gradient-to-br from-slate-100 to-slate-200 rounded-2xl mb-5">

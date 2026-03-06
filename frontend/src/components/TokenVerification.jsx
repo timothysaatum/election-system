@@ -27,7 +27,7 @@ const TokenVerification = ({ onVerified }) => {
 
   const handleTokenChange = (e) => {
     const value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (value.length <= 8) {
+    if (value.length <= 4) {
       setToken(value);
     }
   };

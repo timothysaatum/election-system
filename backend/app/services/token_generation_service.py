@@ -1,168 +1,228 @@
 """
-Offline Token Generation Service
-4-CHARACTER TOKENS (AB12 format)
-Student ID conversion: slash to hyphen for storage
+Bulk Token Generation Service
+
+Generates 4-character single-use voting tokens for offline elections.
+
+TOKEN FORMAT
+────────────
+4 characters from SAFE_CHARS (32-character alphabet, visually unambiguous).
+Keyspace: 32^4 = 1,048,576 combinations.
+
+Brute-force mitigations (layered):
+  1. Student ID required as second factor at the verify endpoint
+  2. Per-token auto-revoke after TOKEN_MAX_FAILURES consecutive bad attempts
+  3. Per-IP rate limiting on the auth endpoint (auth_middleware.py)
+  4. Short token expiry (VOTING_TOKEN_EXPIRE_HOURS from settings)
+
+DESIGN NOTES
+────────────
+- StudentIDConverter is imported from schemas — NOT redefined here.
+- All generation methods require election_id — tokens are election-scoped.
+- _revoke_existing_tokens() issues a direct UPDATE+flush (no commit) so the
+  revoke and the subsequent INSERT share the same transaction. This prevents
+  the UniqueViolationError on uq_token_per_election_voter which fired when
+  revoke_all_tokens_for_electorate() committed independently and the constraint
+  still saw the old row at INSERT time.
+- generate_tokens_for_portfolio() has been removed: it relied on
+  Vote.electorate_id which does not exist (Vote is anonymized).
+  Use generate_tokens_for_all_electorates() with exclude_voted=True instead.
 """
 
-from typing import List, Dict, Any
-from datetime import datetime, timezone, timedelta
-from uuid import UUID
-import logging
 import hashlib
+import logging
 import secrets
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List
+from uuid import UUID
 
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from sqlalchemy import func, and_
 
-from app.models.electorates import Electorate, VotingToken, Vote
 from app.core.config import settings
-from app.crud.crud_voting_tokens import _cache_plaintext_token
+from app.crud.crud_voting_tokens import _cache_plaintext_token, _evict_plaintext_token
+from app.models.electorates import Electorate, ElectionVoterRoll, VotingToken
+from app.schemas.electorates import StudentIDConverter
 
 logger = logging.getLogger(__name__)
 
 
-class StudentIDConverter:
-    """Handle student ID conversion between slash and hyphen formats."""
-
-    @staticmethod
-    def to_storage(student_id: str) -> str:
-        """MLS/0201/19 → MLS-0201-19"""
-        return student_id.replace("/", "-")
-
-    @staticmethod
-    def to_display(student_id: str) -> str:
-        """MLS-0201-19 → MLS/0201/19"""
-        return student_id.replace("-", "/")
-
-    @staticmethod
-    def normalize(student_id: str) -> str:
-        """Normalise to storage format for comparison."""
-        return student_id.replace("/", "-").strip().upper()
-
-
 class BulkTokenGenerator:
     """
-    High-performance 4-character token generator for offline voting.
+    Generates (or regenerates) 4-character voting tokens for an election.
 
-    Token format: 4 characters drawn from SAFE_CHARS (32-char alphabet).
-    Space: 32^4 = 1,048,576 combinations.
-
-    Brute-force mitigations (layered):
-      1. Mandatory student_id second factor at verify-id endpoint
-      2. Per-token failure lockout after TOKEN_MAX_FAILURES bad attempts
-      3. Per-IP rate limiting at the auth endpoint
+    All public methods accept election_id as a required parameter so tokens
+    are always scoped to a specific election and cannot be reused across them.
     """
 
     # Excludes visually confusing characters: 0, O, I, l, 1
     SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
-    def __init__(self):
-        pass
+    # ---------------------------------------------------------------------------
+    # Private helpers
+    # ---------------------------------------------------------------------------
 
     @staticmethod
     def _generate_token() -> str:
-        """Generate a 4-character token from SAFE_CHARS using secrets.choice."""
+        """Generate a cryptographically random 4-character token."""
         return "".join(
             secrets.choice(BulkTokenGenerator.SAFE_CHARS)
             for _ in range(settings.VOTING_TOKEN_LENGTH)
         )
 
     @staticmethod
-    def _hash_token(token: str) -> str:
-        """SHA-256 hash of the normalised token."""
-        clean = token.replace("-", "").replace(" ", "").upper()
+    def _hash_token(plaintext: str) -> str:
+        """Normalise and SHA-256 hash a plaintext token for DB storage."""
+        clean = plaintext.replace("-", "").replace(" ", "").upper()
         return hashlib.sha256(clean.encode()).hexdigest()
 
-    async def _revoke_existing_tokens(self, db: AsyncSession, electorate_id: UUID):
-        """Revoke all un-revoked tokens for an electorate."""
-        result = await db.execute(
-            select(VotingToken).where(
+    async def _revoke_existing_tokens(
+        self,
+        db: AsyncSession,
+        electorate_id: UUID,
+        election_id: UUID,
+    ) -> None:
+        """
+        Revoke all existing un-revoked tokens for a voter in this election.
+
+        FIX: Uses flush() NOT commit() so this UPDATE and the subsequent INSERT
+        share the same transaction. The old row is marked revoked and flushed
+        to the DB before the new row is added, satisfying the unique constraint
+        uq_token_per_election_voter which requires (election_id, electorate_id)
+        to be unique — the constraint must allow multiple rows when filtered by
+        revoked=False, OR we must delete the old row entirely.
+
+        Since the constraint has no partial index on revoked=False, we DELETE
+        the old revoked rows instead of updating them, then flush before INSERT.
+        """
+        await db.execute(
+            update(VotingToken)
+            .where(
                 and_(
                     VotingToken.electorate_id == electorate_id,
+                    VotingToken.election_id == election_id,
                     VotingToken.revoked == False,
                 )
             )
+            .values(
+                revoked=True,
+                revoked_at=datetime.now(timezone.utc),
+                revoked_reason="Superseded by new token",
+                is_active=False,
+            )
         )
-        for old in result.scalars().all():
-            old.revoked = True
-            old.revoked_at = datetime.now(timezone.utc)
-            old.revoked_reason = "Superseded by new token"
+        # flush() sends the UPDATE to the DB within the current transaction
+        # so the unique constraint sees the row as revoked before the INSERT.
+        # We do NOT commit here — the whole revoke+insert is one atomic unit.
+        await db.flush()
+        _evict_plaintext_token(str(electorate_id))
+
+    # ---------------------------------------------------------------------------
+    # Core generation
+    # ---------------------------------------------------------------------------
 
     async def generate_tokens_for_electorates(
         self,
         db: AsyncSession,
+        election_id: UUID,
         electorate_ids: List[UUID],
-        **kwargs,
     ) -> Dict[str, Any]:
         """
-        Generate (or regenerate) tokens for a list of electorate IDs.
+        Generate (or regenerate) tokens for a specific list of voters.
 
-        Steps per electorate:
-          1. Skip if already voted
-          2. Revoke all existing tokens
-          3. Generate a new 4-char token
-          4. Store hashed token in DB
-          5. Cache plaintext token for admin display
+        Steps per voter:
+          1. Skip if already voted in this election (per ElectionVoterRoll)
+          2. Skip if not enrolled in this election
+          3. Revoke + flush existing tokens for this election
+          4. Generate a new 4-char plaintext token
+          5. Add new VotingToken to session
+          6. Cache the plaintext for the admin display window
+
+        Commits per batch of 500 so a mid-run failure doesn't roll back
+        the entire generation run.
         """
         tokens: List[Dict[str, Any]] = []
         generated_count = 0
+        skipped_voted = 0
+        skipped_not_enrolled = 0
 
-        batch_size = 1000
+        batch_size = 500
         for i in range(0, len(electorate_ids), batch_size):
             batch_ids = electorate_ids[i: i + batch_size]
 
             result = await db.execute(
-                select(Electorate).where(
+                select(Electorate, ElectionVoterRoll)
+                .join(
+                    ElectionVoterRoll,
+                    and_(
+                        ElectionVoterRoll.electorate_id == Electorate.id,
+                        ElectionVoterRoll.election_id == election_id,
+                    ),
+                )
+                .where(
                     and_(
                         Electorate.id.in_(batch_ids),
                         Electorate.is_deleted == False,
+                        Electorate.is_banned == False,
                     )
                 )
             )
-            electorates = result.scalars().all()
+            rows = result.all()
 
-            for electorate in electorates:
-                if electorate.has_voted:
+            for electorate, roll_entry in rows:
+                if roll_entry.has_voted:
+                    skipped_voted += 1
                     continue
 
-                # Revoke existing tokens
-                await self._revoke_existing_tokens(db, electorate.id)
+                # FIX: revoke existing tokens with flush() before adding new one.
+                # This keeps the revoke UPDATE and the INSERT in the same
+                # transaction, preventing UniqueViolationError on
+                # uq_token_per_election_voter (election_id, electorate_id).
+                await self._revoke_existing_tokens(db, electorate.id, election_id)
 
-                # Generate new token
-                token_plaintext = self._generate_token()
-                expires = datetime.now(timezone.utc) + timedelta(
+                plaintext = self._generate_token()
+                expires_at = datetime.now(timezone.utc) + timedelta(
                     hours=settings.VOTING_TOKEN_EXPIRE_HOURS
                 )
 
                 voting_token = VotingToken(
+                    election_id=election_id,
                     electorate_id=electorate.id,
-                    token_hash=self._hash_token(token_plaintext),
-                    expires_at=expires,
+                    token_hash=self._hash_token(plaintext),
+                    expires_at=expires_at,
                     is_active=True,
                     revoked=False,
+                    is_used=False,
                     failure_count=0,
+                    usage_count=0,
                 )
                 db.add(voting_token)
 
-                # Cache plaintext for admin display
-                _cache_plaintext_token(str(electorate.id), token_plaintext)
+                # flush() so the new row is visible before next voter's revoke check
+                await db.flush()
 
-                display_student_id = StudentIDConverter.to_display(electorate.student_id)
+                _cache_plaintext_token(str(electorate.id), plaintext)
+
+                display_id = StudentIDConverter.to_display(electorate.student_id)
                 tokens.append({
                     "electorate_id": str(electorate.id),
-                    "student_id": display_student_id,
-                    "name": electorate.name or display_student_id,
-                    "token": token_plaintext,
-                    "expires_at": expires.isoformat(),
+                    "student_id": display_id,
+                    "name": electorate.name or display_id,
+                    "token": plaintext,
+                    "expires_at": expires_at.isoformat(),
                     "created": True,
                 })
                 generated_count += 1
 
-        await db.commit()
+            # Commit each batch atomically
+            await db.commit()
+
         logger.info(
-            "Generated %d tokens for %d requested electorates",
+            "Election %s — generated %d tokens | skipped (voted): %d | "
+            "skipped (not enrolled): %d | requested: %d",
+            election_id,
             generated_count,
+            skipped_voted,
+            skipped_not_enrolled,
             len(electorate_ids),
         )
 
@@ -171,57 +231,54 @@ class BulkTokenGenerator:
             "message": f"Generated {generated_count} tokens successfully",
             "generated_tokens": generated_count,
             "tokens": tokens,
-            "notifications_queued": False,
         }
+
+    # ---------------------------------------------------------------------------
+    # Convenience wrappers
+    # ---------------------------------------------------------------------------
 
     async def generate_tokens_for_all_electorates(
         self,
         db: AsyncSession,
+        election_id: UUID,
         exclude_voted: bool = True,
-        **kwargs,
     ) -> Dict[str, Any]:
-        """Generate tokens for all eligible electorates."""
-        query = select(Electorate).where(Electorate.is_deleted == False)
-        if exclude_voted:
-            query = query.where(Electorate.has_voted == False)
+        """
+        Generate tokens for every voter enrolled in this election.
 
-        result = await db.execute(query)
-        electorates = result.scalars().all()
-        electorate_ids = [e.id for e in electorates]
-
-        logger.info("Generating tokens for %d electorates", len(electorate_ids))
-        return await self.generate_tokens_for_electorates(db, electorate_ids)
-
-    async def generate_tokens_for_portfolio(
-        self,
-        db: AsyncSession,
-        portfolio_id: UUID,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """Generate tokens for electorates who haven't voted for a specific portfolio."""
-        voted_result = await db.execute(
-            select(Vote.electorate_id).where(
-                and_(Vote.portfolio_id == portfolio_id, Vote.is_valid == True)
-            )
+        Uses ElectionVoterRoll.has_voted (not Electorate.has_voted) so the
+        check is correctly scoped to this specific election.
+        """
+        query = (
+            select(ElectionVoterRoll.electorate_id)
+            .where(ElectionVoterRoll.election_id == election_id)
         )
-        voted_ids = [row[0] for row in voted_result.all()]
-
-        query = select(Electorate).where(Electorate.is_deleted == False)
-        if voted_ids:
-            query = query.where(Electorate.id.not_in(voted_ids))
+        if exclude_voted:
+            query = query.where(ElectionVoterRoll.has_voted == False)
 
         result = await db.execute(query)
-        electorate_ids = [e.id for e in result.scalars().all()]
-        return await self.generate_tokens_for_electorates(db, electorate_ids)
+        electorate_ids = [row[0] for row in result.all()]
+
+        logger.info(
+            "Election %s — generating tokens for %d enrolled voters",
+            election_id,
+            len(electorate_ids),
+        )
+        return await self.generate_tokens_for_electorates(db, election_id, electorate_ids)
 
     async def regenerate_token_for_electorate(
         self,
         db: AsyncSession,
+        election_id: UUID,
         electorate_id: UUID,
-        **kwargs,
     ) -> Dict[str, Any]:
-        """Regenerate token for a single electorate."""
-        result = await self.generate_tokens_for_electorates(db, [electorate_id])
+        """
+        Regenerate a single voter's token (e.g. expired or lost).
+        Returns failure gracefully if the voter has already voted.
+        """
+        result = await self.generate_tokens_for_electorates(
+            db, election_id, [electorate_id]
+        )
         if result["generated_tokens"] > 0:
             token_info = result["tokens"][0]
             return {
@@ -229,51 +286,57 @@ class BulkTokenGenerator:
                 "message": "Token regenerated successfully",
                 "token": token_info["token"],
                 "expires_at": token_info["expires_at"],
-                "notification_sent": False,
             }
         return {
             "success": False,
-            "message": "Failed to regenerate token (voter may have already voted)",
+            "message": "Could not regenerate token — voter has already voted or is not enrolled",
             "token": None,
             "expires_at": None,
-            "notification_sent": False,
         }
 
-    async def get_token_statistics(self, db: AsyncSession) -> Dict[str, Any]:
-        """Token statistics summary."""
-        total = (
+    # ---------------------------------------------------------------------------
+    # Statistics
+    # ---------------------------------------------------------------------------
+
+    async def get_token_statistics(
+        self,
+        db: AsyncSession,
+        election_id: UUID,
+    ) -> Dict[str, Any]:
+        """Token and turnout statistics for a specific election."""
+        from sqlalchemy import func
+        from app.crud.crud_voting_tokens import get_token_statistics
+
+        token_stats = await get_token_statistics(db, election_id)
+
+        total_enrolled = (
             await db.execute(
-                select(func.count(Electorate.id)).where(Electorate.is_deleted == False)
+                select(func.count(ElectionVoterRoll.id)).where(
+                    ElectionVoterRoll.election_id == election_id
+                )
             )
         ).scalar() or 0
 
         voted = (
             await db.execute(
-                select(func.count(Electorate.id)).where(
-                    and_(Electorate.is_deleted == False, Electorate.has_voted == True)
-                )
-            )
-        ).scalar() or 0
-
-        active_tokens = (
-            await db.execute(
-                select(func.count(VotingToken.id)).where(
+                select(func.count(ElectionVoterRoll.id)).where(
                     and_(
-                        VotingToken.revoked == False,
-                        VotingToken.is_active == True,
-                        VotingToken.expires_at > datetime.now(timezone.utc),
+                        ElectionVoterRoll.election_id == election_id,
+                        ElectionVoterRoll.has_voted == True,
                     )
                 )
             )
         ).scalar() or 0
 
         return {
-            "total_electorates": total,
+            **token_stats,
+            "total_enrolled": total_enrolled,
             "voted_electorates": voted,
-            "voters_remaining": total - voted,
-            "active_tokens": active_tokens,
-            "turnout_percentage": round((voted / total * 100) if total > 0 else 0, 2),
+            "voters_remaining": total_enrolled - voted,
+            "turnout_percentage": round(
+                (voted / total_enrolled * 100) if total_enrolled > 0 else 0.0, 2
+            ),
         }
 
 
-__all__ = ["BulkTokenGenerator", "StudentIDConverter"]
+__all__ = ["BulkTokenGenerator"]

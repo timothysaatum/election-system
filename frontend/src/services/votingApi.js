@@ -1,358 +1,225 @@
+/**
+ * votingApi.js — Voter-side API Service
+ *
+ */
+
 const API_BASE_URL = process.env.REACT_APP_API_URL || "/api";
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 1000;
-const TOKEN_REFRESH_THRESHOLD = 2 * 60 * 1000; // Refresh if less than 2 minutes left
+
+const TOKEN_KEY = "voting_token";
+const VOTER_DATA_KEY = "voting_voter_data";
 
 class VotingApiService {
-  constructor() {
-    this.tokenKey = "voting_token";
-    this.voterDataKey = "voter_data";
-    this.tokenExpiryKey = "token_expiry";
-    this.refreshPromise = null;
-  }
+  // -------------------------------------------------------------------------
+  // Internal request helper
+  // -------------------------------------------------------------------------
 
-  // Helper: Get stored token
-  getToken() {
-    return sessionStorage.getItem(this.tokenKey);
-  }
-
-  // Helper: Set token with expiry tracking
-  setToken(token, expiresIn = 600) {
-    // Ensure expiresIn is a number
-    const expiresInSeconds = parseInt(expiresIn, 10) || 600;
-    sessionStorage.setItem(this.tokenKey, token);
-    const expiryTime = Date.now() + expiresInSeconds * 1000;
-    sessionStorage.setItem(this.tokenExpiryKey, expiryTime.toString());
-    console.log(`[VotingAPI] Token set with expiry in ${expiresInSeconds} seconds`);
-  }
-
-  // Helper: Check if token needs refresh
-  needsRefresh() {
-    const expiryTime = sessionStorage.getItem(this.tokenExpiryKey);
-    if (!expiryTime) return false;
-
-    const timeUntilExpiry = parseInt(expiryTime) - Date.now();
-    return timeUntilExpiry > 0 && timeUntilExpiry < TOKEN_REFRESH_THRESHOLD;
-  }
-
-  // Helper: Check if token is expired
-  isTokenExpired() {
-    const expiryTime = sessionStorage.getItem(this.tokenExpiryKey);
-    if (!expiryTime) return true;
-
-    return Date.now() >= parseInt(expiryTime);
-  }
-
-  // Helper: Check if user has a token (logged in)
-  hasToken() {
-    return !!this.getToken();
-  }
-
-  // Helper: Clear token
-  clearToken() {
-    sessionStorage.removeItem(this.tokenKey);
-    sessionStorage.removeItem(this.voterDataKey);
-    sessionStorage.removeItem(this.tokenExpiryKey);
-    localStorage.removeItem(this.tokenKey);
-    localStorage.removeItem(this.voterDataKey);
-  }
-
-  // Helper: Refresh access token using refresh token cookie
-  async refreshAccessToken() {
-    if (this.refreshPromise) {
-      return this.refreshPromise;
-    }
-
-    this.refreshPromise = (async () => {
-      try {
-        console.log("[VotingAPI] Attempting to refresh access token...");
-        const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error("Token refresh failed");
-        }
-
-        const data = await response.json();
-        this.setToken(data.access_token, data.expires_in);
-
-        console.log("[VotingAPI] Access token refreshed successfully");
-        return data.access_token;
-      } catch (error) {
-        console.error("[VotingAPI] Token refresh error:", error);
-        this.clearToken();
-        throw error;
-      } finally {
-        this.refreshPromise = null;
-      }
-    })();
-
-    return this.refreshPromise;
-  }
-
-  // Helper: Retry logic with exponential backoff
-  async retryRequest(fn, retries = MAX_RETRIES) {
-    for (let i = 0; i < retries; i++) {
-      try {
-        return await fn();
-      } catch (error) {
-        if (i === retries - 1) throw error;
-        const delay = RETRY_DELAY * Math.pow(2, i);
-        console.log(`[VotingAPI] Retry ${i + 1}/${retries} after ${delay}ms...`);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-
-  // Helper: Make authenticated request with auto-refresh
   async request(endpoint, options = {}) {
-    // DON'T try to refresh if we don't have a token yet
-    if (!this.hasToken()) {
-      // This is likely the initial login request, proceed normally
-      console.log(`[VotingAPI] Making unauthenticated request to ${endpoint}`);
-      const headers = {
-        "Content-Type": "application/json",
-        ...options.headers,
-      };
-
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        ...options,
-        headers,
-        credentials: "include",
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(
-          error.detail || `Request failed with status ${response.status}`
-        );
-      }
-
-      return response.json();
-    }
-
-    // Check if token needs refresh (only if we have a token)
-    if (this.needsRefresh() && !this.isTokenExpired()) {
-      console.log("[VotingAPI] Token needs refresh - refreshing proactively...");
-      try {
-        await this.refreshAccessToken();
-      } catch (error) {
-        console.error("[VotingAPI] Failed to refresh token:", error);
-        // Continue with existing token - it might still be valid
-      }
-    }
-
-    let token = this.getToken();
-
-    // If token is expired, try to refresh
-    if (this.isTokenExpired()) {
-      console.log("[VotingAPI] Token is expired - attempting refresh...");
-      try {
-        token = await this.refreshAccessToken();
-      } catch (error) {
-        this.clearToken();
-        throw new Error("Session expired. Please verify your token again.");
-      }
-    }
-
-    console.log(`[VotingAPI] Making authenticated request to ${endpoint} with token: ${token ? token.substring(0, 20) + "..." : "MISSING"}`);
-
+    const token = this.getToken();
     const headers = {
       "Content-Type": "application/json",
       ...(token && { Authorization: `Bearer ${token}` }),
       ...options.headers,
     };
 
-    console.log("[VotingAPI] Request headers:", {
-      Authorization: token ? "Bearer " + token.substring(0, 20) + "..." : "NONE",
-      "Content-Type": headers["Content-Type"]
-    });
-
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
       headers,
-      credentials: "include",
     });
 
-    console.log(`[VotingAPI] Response status from ${endpoint}:`, response.status, response.statusText);
-
-    // Handle token expiration - try to refresh once
-    if (response.status === 401 && !options._isRetry) {
-      console.log("[VotingAPI] Received 401 - attempting token refresh...");
-      try {
-        await this.refreshAccessToken();
-        return this.request(endpoint, { ...options, _isRetry: true });
-      } catch (refreshError) {
-        console.error("[VotingAPI] Token refresh failed:", refreshError);
-        this.clearToken();
-        throw new Error("Session expired. Please verify your token again.");
-      }
+    // 401 — token invalid / expired
+    if (response.status === 401) {
+      this.clearToken();
+      // Do NOT redirect automatically — let the component/hook decide
+      throw new Error("Session expired. Please verify your token again.");
     }
 
-    // Handle 403 specifically for voting
-    if (response.status === 403) {
-      const error = await response.json().catch(() => ({}));
-      console.error("[VotingAPI] 403 Forbidden:", error);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Request failed");
+    return data;
+  }
 
-      // If it's "Not authenticated", try refreshing token
-      if (error.detail === "Not authenticated" && !options._isRetry) {
-        console.log("[VotingAPI] Attempting to recover from authentication error...");
-        try {
-          await this.refreshAccessToken();
-          return this.request(endpoint, { ...options, _isRetry: true });
-        } catch (refreshError) {
-          console.error("[VotingAPI] Cannot recover - session expired");
-          this.clearToken();
-          throw new Error("Session expired. Please verify your token again.");
-        }
-      }
+  // -------------------------------------------------------------------------
+  // Token storage
+  // -------------------------------------------------------------------------
 
-      throw new Error(error.detail || "Access forbidden");
+  getToken() {
+    try {
+      return sessionStorage.getItem(TOKEN_KEY);
+    } catch {
+      return null;
     }
+  }
 
-    // Handle rate limiting
-    if (response.status === 429) {
-      const retryAfter = response.headers.get("Retry-After");
-      throw new Error(
-        `Rate limit exceeded. Please try again ${retryAfter ? `in ${retryAfter} seconds` : "later"
-        }.`
-      );
+  setToken(token) {
+    try {
+      sessionStorage.setItem(TOKEN_KEY, token);
+    } catch {
+      console.warn("[votingApi] sessionStorage unavailable — token kept in memory only");
     }
+  }
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      console.error(`[VotingAPI] Request failed with status ${response.status}:`, error);
-      throw new Error(
-        error.detail || `Request failed with status ${response.status}`
-      );
+  clearToken() {
+    try {
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(VOTER_DATA_KEY);
+    } catch {
+      // ignore
     }
+  }
 
-    return response.json();
+  // -------------------------------------------------------------------------
+  // — voter data persistence
+  // -------------------------------------------------------------------------
+
+  saveVoterData(data) {
+    try {
+      sessionStorage.setItem(VOTER_DATA_KEY, JSON.stringify(data));
+    } catch {
+      // ignore
+    }
+  }
+
+  getStoredVoterData() {
+    try {
+      const raw = sessionStorage.getItem(VOTER_DATA_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // — JWT expiry helpers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Decode the JWT payload without verifying the signature (client-side only).
+   * Returns null if the token is missing or malformed.
+   */
+  _decodeJwtPayload() {
+    const token = this.getToken();
+    if (!token) return null;
+    try {
+      const [, payloadB64] = token.split(".");
+      const json = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
+      return JSON.parse(json);
+    } catch {
+      return null;
+    }
   }
 
   /**
-   * Verify voting token
+   * Returns true if the stored JWT is missing or its exp claim is in the past.
    */
-  async verifyToken(token, studentId = null, options = {}) {
-    const cleanToken = token
-      .replace(/[\s\-]/g, "")
-      .replace(/[^A-Za-z0-9]/g, "")
-      .toUpperCase();
+  isTokenExpired() {
+    const payload = this._decodeJwtPayload();
+    if (!payload) return true;
+    return Date.now() >= payload.exp * 1000;
+  }
 
-    if (cleanToken.length !== 4) {
-      throw new Error("Token must be exactly 4 characters");
-    }
+  /**
+   * Returns milliseconds remaining until the JWT expires.
+   * Returns 0 if expired or token unavailable.
+   */
+  getRemainingTime() {
+    const payload = this._decodeJwtPayload();
+    if (!payload) return 0;
+    return Math.max(payload.exp * 1000 - Date.now(), 0);
+  }
 
-    console.log("[VotingAPI] Verifying token...");
-    const responseBody = {
-      token: cleanToken,
-    };
+  // -------------------------------------------------------------------------
+  // Auth endpoints
+  // -------------------------------------------------------------------------
 
-    if (studentId) {
-      responseBody.student_id = studentId;
-    }
-
+  /**
+   * — POST /auth/verify-id
+   * Sends { token, student_id } matching TokenVerificationRequest.
+   * Stores the JWT and voter data on success.
+   */
+  async verifyToken(token, studentId) {
     const data = await this.request("/auth/verify-id", {
       method: "POST",
-      body: JSON.stringify(responseBody),
+      body: JSON.stringify({
+        token: token,
+        student_id: studentId,
+      }),
     });
 
-    // Store token with expiry tracking
-    this.setToken(data.access_token, data.expires_in);
-    sessionStorage.setItem(this.voterDataKey, JSON.stringify(data.electorate));
+    // Store the access token for subsequent requests
+    if (data.access_token) {
+      this.setToken(data.access_token);
+    }
 
-    console.log("[VotingAPI] Token verified successfully, expires in:", data.expires_in, "seconds");
+    // Persist electorate data so session can be restored on page refresh
+    if (data.electorate) {
+      this.saveVoterData(data.electorate);
+    }
+
     return data;
   }
 
   /**
-   * Get voting ballot for authenticated voter
+   * GET /auth/verify-session — lightweight session check.
+   * Returns true if the session is still valid, false otherwise.
+   * Does NOT throw on 401 (treats it as "session invalid").
+   */
+  async checkSession() {
+    try {
+      await this.request("/auth/verify-session");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Voting endpoints
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /voting/ballot
+   * Returns the list of active candidates grouped by portfolio.
    */
   async getBallot() {
-    console.log("[VotingAPI] Fetching ballot...");
-    return this.retryRequest(() => this.request("/voting/ballot"));
+    return this.request("/voting/ballot");
   }
 
   /**
-   * Cast votes for selected candidates
+   * POST /voting/vote
+   *
+   * @param {Array<{ portfolio_id, candidate_id, vote_type }>} votes
    */
   async castVote(votes) {
-    if (!Array.isArray(votes) || votes.length === 0) {
-      throw new Error("Votes must be a non-empty array");
-    }
+    const VOTE_TYPE_MAP = {
+      endorsed: "endorsed",
+      rejected: "abstain",
+      abstain: "abstain",
+    };
 
-    votes.forEach((vote) => {
-      if (!vote.portfolio_id || !vote.candidate_id) {
-        throw new Error("Each vote must have portfolio_id and candidate_id");
-      }
-    });
-
-    console.log("[VotingAPI] Casting votes:", votes.length, "selections");
-
-    // Ensure we have a valid token before casting vote
-    if (this.isTokenExpired()) {
-      console.log("[VotingAPI] Token expired before vote submission - refreshing...");
-      try {
-        await this.refreshAccessToken();
-      } catch (error) {
-        throw new Error("Your session has expired. Please verify your token again.");
-      }
-    }
+    const payload = votes.map((v) => ({
+      portfolio_id: v.portfolio_id,
+      candidate_id: v.candidate_id,
+      vote_type: VOTE_TYPE_MAP[v.vote_type] ?? "abstain",
+    }));
 
     const result = await this.request("/voting/vote", {
       method: "POST",
-      body: JSON.stringify({ votes }),
+      body: JSON.stringify({ votes: payload }),
     });
 
-    console.log("[VotingAPI] Vote cast successfully");
+    // Session ends after a successful vote — clear storage immediately
     this.clearToken();
     return result;
   }
 
   /**
-   * Get votes cast by current voter
+   * GET /voting/my-votes
+   * Fetch this voter's submitted votes (useful for confirmation screen).
+   * NOTE: call this BEFORE castVote() clears the token, or this will 401.
    */
   async getMyVotes() {
-    console.log("[VotingAPI] Fetching my votes...");
     return this.request("/voting/my-votes");
-  }
-
-  /**
-   * Check if current session is valid
-   */
-  async checkSession() {
-    try {
-      console.log("[VotingAPI] Checking session validity...");
-      await this.request("/auth/verify");
-      console.log("[VotingAPI] Session is valid");
-      return true;
-    } catch (error) {
-      console.log("[VotingAPI] Session is invalid:", error.message);
-      return false;
-    }
-  }
-
-  /**
-   * Get stored voter data
-   */
-  getVoterData() {
-    const data = sessionStorage.getItem(this.voterDataKey);
-    return data ? JSON.parse(data) : null;
-  }
-
-  /**
-   * Logout and clear all session data
-   */
-  logout() {
-    console.log("[VotingAPI] Logging out...");
-    this.clearToken();
   }
 }
 
 export const votingApi = new VotingApiService();
-export default votingApi;

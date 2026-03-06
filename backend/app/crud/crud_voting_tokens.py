@@ -1,50 +1,56 @@
 """
-CRUD for VotingToken — includes failure tracking and a plaintext token cache
-for admin display after bulk generation.
+CRUD for VotingToken.
+
+Includes:
+  - Failure tracking and auto-revoke (via model helpers)
+  - In-process plaintext token cache for admin display window
+  - All queries are election-scoped
+
+PLAINTEXT TOKEN CACHE
+─────────────────────
+The DB only ever stores the SHA-256 hash of a token.  During a generation
+run the plaintext is written to _token_display_cache keyed by electorate_id.
+Entries expire after TOKEN_DISPLAY_TTL_SECONDS (1 hour).  This window gives
+EC officials enough time to read out tokens to voters before the cache clears.
+
+Multi-worker note: each worker process has an independent cache.  This is
+acceptable because the generation response itself always contains the tokens.
+The cache is only needed if the admin re-fetches the display list after the
+fact on a different worker.
 """
 
+import hashlib
+import time
+import uuid
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
+
+from sqlalchemy import and_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
 from sqlalchemy.orm import selectinload
+
 from app.models.electorates import VotingToken
 from app.schemas.electorates import VotingTokenCreate
-from typing import List, Optional
-import uuid
-import hashlib
-from datetime import datetime, timezone
+
 
 # ---------------------------------------------------------------------------
-# In-process plaintext token cache
+# Plaintext token cache
 # ---------------------------------------------------------------------------
-# During a token generation run, the plaintext token is stored here keyed by
-# electorate_id (as str).  Entries expire after TOKEN_DISPLAY_TTL_SECONDS.
-# This allows the admin UI to display the token immediately after generation.
-# The cache is cleared when tokens are regenerated or the process restarts —
-# intentional, since there is no purpose in displaying old tokens.
-#
-# With multiple workers each worker has an independent cache.  This is
-# acceptable: the admin calls the generation endpoint once (on one worker)
-# then immediately fetches the display list (on the same or another worker).
-# The response from the generation endpoint itself always returns the tokens,
-# so the cache is only needed if the admin re-fetches the list after the fact.
-# ---------------------------------------------------------------------------
-
-import time
-from typing import Dict, Tuple
 
 _token_display_cache: Dict[str, Tuple[str, float]] = {}
-TOKEN_DISPLAY_TTL_SECONDS = 3600  # 1 hour — matches typical distribution window
+TOKEN_DISPLAY_TTL_SECONDS = 3600  # 1 hour
 
 
-def _cache_plaintext_token(electorate_id: str, plaintext: str):
-    """Store a plaintext token in the display cache with a TTL."""
+def _cache_plaintext_token(electorate_id: str, plaintext: str) -> None:
+    """Store a plaintext token in the display cache with a TTL timestamp."""
     _token_display_cache[electorate_id] = (plaintext, time.time())
 
 
 def _get_plaintext_token(electorate_id: str) -> Optional[str]:
     """
     Retrieve a cached plaintext token.
-    Returns None if not found or TTL has expired.
+    Returns None if the entry is missing or has expired.
     """
     entry = _token_display_cache.get(electorate_id)
     if not entry:
@@ -56,31 +62,52 @@ def _get_plaintext_token(electorate_id: str) -> Optional[str]:
     return plaintext
 
 
-def _evict_plaintext_token(electorate_id: str):
-    """Remove a cached token (e.g. after the voter has authenticated)."""
+def _evict_plaintext_token(electorate_id: str) -> None:
+    """Remove one entry — call after a voter successfully authenticates."""
     _token_display_cache.pop(electorate_id, None)
 
 
-def _evict_all_plaintext_tokens():
-    """Clear the entire display cache (e.g. after all tokens are distributed)."""
+def _evict_all_plaintext_tokens() -> None:
+    """Clear the entire cache — call when the election closes."""
     _token_display_cache.clear()
 
 
 # ---------------------------------------------------------------------------
-# CRUD
+# Hash helper (kept here so callers don't depend on the service layer)
+# ---------------------------------------------------------------------------
+
+def _hash_token(plaintext: str) -> str:
+    """Normalise and SHA-256 hash a plaintext token for storage."""
+    clean = plaintext.replace("-", "").replace(" ", "").upper()
+    return hashlib.sha256(clean.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Create
 # ---------------------------------------------------------------------------
 
 async def create_voting_token(
-    db: AsyncSession, token_data: VotingTokenCreate, token: str, expires_at: datetime
+    db: AsyncSession,
+    token_data: VotingTokenCreate,   # now carries election_id + electorate_id
+    plaintext_token: str,
+    expires_at: datetime,
 ) -> VotingToken:
-    """Create a new voting token record."""
-    clean_token = token.replace("-", "").replace(" ", "").upper()
-    token_hash = hashlib.sha256(clean_token.encode()).hexdigest()
+    """
+    Persist a new VotingToken row.
 
+    The plaintext is hashed before storage — it is never saved in the DB.
+    Raises IntegrityError if UniqueConstraint(election_id, electorate_id)
+    fires (voter already has a token for this election).
+    """
     db_token = VotingToken(
+        election_id=token_data.election_id,        # was missing — caused DB crash
         electorate_id=token_data.electorate_id,
-        token_hash=token_hash,
+        token_hash=_hash_token(plaintext_token),
         expires_at=expires_at,
+        is_active=True,
+        revoked=False,
+        failure_count=0,
+        usage_count=0,
     )
     db.add(db_token)
     await db.commit()
@@ -88,22 +115,49 @@ async def create_voting_token(
     return db_token
 
 
+# ---------------------------------------------------------------------------
+# Read
+# ---------------------------------------------------------------------------
+
 async def get_voting_token_by_hash(
-    db: AsyncSession, token_hash: str
+    db: AsyncSession,
+    token_hash: str,
+    election_id: uuid.UUID,
 ) -> Optional[VotingToken]:
-    """Get voting token by SHA-256 hash, eagerly loading the electorate."""
+    """
+    Fetch a token by its SHA-256 hash, scoped to a specific election.
+    Eagerly loads the electorate so callers can read student_id immediately.
+    """
     result = await db.execute(
         select(VotingToken)
         .options(selectinload(VotingToken.electorate))
-        .where(VotingToken.token_hash == token_hash)
+        .where(
+            and_(
+                VotingToken.token_hash == token_hash,
+                VotingToken.election_id == election_id,
+            )
+        )
     )
     return result.scalar_one_or_none()
 
 
-async def get_voting_token_by_id(
-    db: AsyncSession, token_id: uuid.UUID
+async def get_voting_token_by_plaintext(
+    db: AsyncSession,
+    plaintext_token: str,
+    election_id: uuid.UUID,
 ) -> Optional[VotingToken]:
-    """Get voting token by ID."""
+    """
+    Convenience wrapper: hash the plaintext then call get_voting_token_by_hash.
+    Use this at the verify endpoint so the route handler never touches raw hashes.
+    """
+    return await get_voting_token_by_hash(db, _hash_token(plaintext_token), election_id)
+
+
+async def get_voting_token_by_id(
+    db: AsyncSession,
+    token_id: uuid.UUID,
+) -> Optional[VotingToken]:
+    """Fetch a token by primary key."""
     result = await db.execute(
         select(VotingToken)
         .options(selectinload(VotingToken.electorate))
@@ -112,58 +166,143 @@ async def get_voting_token_by_id(
     return result.scalar_one_or_none()
 
 
-async def get_active_voting_tokens_by_electorate(
-    db: AsyncSession, electorate_id: uuid.UUID
-) -> List[VotingToken]:
-    """Get all active voting tokens for an electorate."""
+async def get_active_token_for_electorate(
+    db: AsyncSession,
+    electorate_id: uuid.UUID,
+    election_id: uuid.UUID,
+) -> Optional[VotingToken]:
+    """
+    Return the single active, unexpired, non-revoked token for a voter in
+    a given election, or None.
+
+    There should only ever be one (UniqueConstraint on election+electorate),
+    but scalar_one_or_none() guards against any data anomaly.
+    """
     result = await db.execute(
         select(VotingToken).where(
-            VotingToken.electorate_id == electorate_id,
-            VotingToken.is_active == True,
-            VotingToken.revoked == False,
-            VotingToken.expires_at > datetime.now(timezone.utc),
+            and_(
+                VotingToken.electorate_id == electorate_id,
+                VotingToken.election_id == election_id,
+                VotingToken.is_active == True,
+                VotingToken.revoked == False,
+                VotingToken.is_used == False,
+                VotingToken.expires_at > datetime.now(timezone.utc),
+            )
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_active_voting_tokens_by_electorate(
+    db: AsyncSession,
+    electorate_id: uuid.UUID,
+    election_id: uuid.UUID,
+) -> List[VotingToken]:
+    """Return all active tokens for a voter in an election (normally at most 1)."""
+    result = await db.execute(
+        select(VotingToken).where(
+            and_(
+                VotingToken.electorate_id == electorate_id,
+                VotingToken.election_id == election_id,
+                VotingToken.is_active == True,
+                VotingToken.revoked == False,
+                VotingToken.expires_at > datetime.now(timezone.utc),
+            )
         )
     )
     return result.scalars().all()
 
 
-async def update_token_usage(
-    db: AsyncSession, token_id: uuid.UUID
+# ---------------------------------------------------------------------------
+# Update — usage tracking
+# ---------------------------------------------------------------------------
+
+async def record_token_use(
+    db: AsyncSession,
+    token_id: uuid.UUID,
 ) -> Optional[VotingToken]:
-    """Update token usage count and last-used timestamp (legacy helper)."""
+    """
+    Record a successful authentication (token presented at a station).
+    Resets failure_count and increments usage_count.
+
+    NOTE: Previously called record_successful_use() — renamed to match
+    the model helper record_use().
+    """
     result = await db.execute(select(VotingToken).where(VotingToken.id == token_id))
     token = result.scalar_one_or_none()
     if token:
-        token.record_successful_use()
+        token.record_use()          # model helper — was called record_successful_use() (wrong)
         await db.commit()
         await db.refresh(token)
     return token
 
 
-async def revoke_voting_token(
-    db: AsyncSession, token_id: uuid.UUID, reason: str = "Manual revocation"
-) -> bool:
-    """Manually revoke a voting token."""
+async def increment_token_failure(
+    db: AsyncSession,
+    token_id: uuid.UUID,
+    max_failures: int = 5,
+) -> Tuple[Optional[VotingToken], bool]:
+    """
+    Increment the failure counter for a token.
+
+    Returns (token, was_auto_revoked).
+    If max_failures is reached the token is auto-revoked and the caller
+    should log a WARNING audit event.
+    """
     result = await db.execute(select(VotingToken).where(VotingToken.id == token_id))
     token = result.scalar_one_or_none()
-    if token:
-        token.revoked = True
-        token.revoked_at = datetime.now(timezone.utc)
-        token.revoked_reason = reason
-        token.is_active = False
-        await db.commit()
+    if not token:
+        return None, False
+    auto_revoked = token.increment_failure(max_failures)
+    await db.commit()
+    if auto_revoked:
         _evict_plaintext_token(str(token.electorate_id))
-        return True
-    return False
+    return token, auto_revoked
+
+
+# ---------------------------------------------------------------------------
+# Revoke
+# ---------------------------------------------------------------------------
+
+async def revoke_voting_token(
+    db: AsyncSession,
+    token_id: uuid.UUID,
+    reason: str = "Manual revocation",
+) -> bool:
+    """Manually revoke a single token by ID."""
+    result = await db.execute(select(VotingToken).where(VotingToken.id == token_id))
+    token = result.scalar_one_or_none()
+    if not token:
+        return False
+    token.revoked = True
+    token.revoked_at = datetime.now(timezone.utc)
+    token.revoked_reason = reason
+    token.is_active = False
+    await db.commit()
+    _evict_plaintext_token(str(token.electorate_id))
+    return True
 
 
 async def revoke_all_tokens_for_electorate(
-    db: AsyncSession, electorate_id: uuid.UUID, reason: str = "Electorate revocation"
+    db: AsyncSession,
+    electorate_id: uuid.UUID,
+    election_id: uuid.UUID,
+    reason: str = "Superseded by new token",
 ) -> int:
-    """Revoke all active tokens for an electorate."""
+    """
+    Revoke all un-revoked tokens for a voter in a specific election.
+    Called before issuing a replacement token.
+    Returns the number of tokens revoked.
+    """
     result = await db.execute(
         update(VotingToken)
-        .where(VotingToken.electorate_id == electorate_id, VotingToken.revoked == False)
+        .where(
+            and_(
+                VotingToken.electorate_id == electorate_id,
+                VotingToken.election_id == election_id,
+                VotingToken.revoked == False,
+            )
+        )
         .values(
             revoked=True,
             revoked_at=datetime.now(timezone.utc),
@@ -176,57 +315,140 @@ async def revoke_all_tokens_for_electorate(
     return result.rowcount
 
 
-async def cleanup_expired_tokens(db: AsyncSession) -> int:
-    """Delete expired tokens and clean their display cache entries."""
+# ---------------------------------------------------------------------------
+# Cleanup — SOFT only (tokens are part of the audit trail)
+# ---------------------------------------------------------------------------
+
+async def mark_expired_tokens(db: AsyncSession, election_id: uuid.UUID) -> int:
+    """
+    Soft-expire tokens whose expiry time has passed: set is_active=False,
+    revoked=True, revoked_reason='Expired'.
+
+    Does NOT hard-delete.  Tokens are part of the audit trail and must be
+    retained after the election closes.  Hard-delete was a bug in the
+    previous implementation.
+
+    Returns the number of tokens updated.
+    """
     result = await db.execute(
-        delete(VotingToken).where(VotingToken.expires_at < datetime.now(timezone.utc))
+        update(VotingToken)
+        .where(
+            and_(
+                VotingToken.election_id == election_id,
+                VotingToken.expires_at < datetime.now(timezone.utc),
+                VotingToken.revoked == False,
+                VotingToken.is_used == False,
+            )
+        )
+        .values(
+            is_active=False,
+            revoked=True,
+            revoked_at=datetime.now(timezone.utc),
+            revoked_reason="Expired",
+        )
     )
     await db.commit()
     return result.rowcount
 
 
-async def get_token_statistics(db: AsyncSession) -> dict:
-    """Token usage statistics."""
+# ---------------------------------------------------------------------------
+# Statistics
+# ---------------------------------------------------------------------------
+
+async def get_token_statistics(
+    db: AsyncSession,
+    election_id: uuid.UUID,
+) -> dict:
+    """Token usage statistics for a specific election."""
     from sqlalchemy import func
 
-    total = (await db.execute(select(func.count(VotingToken.id)))).scalar() or 0
-    active = (await db.execute(
-        select(func.count(VotingToken.id)).where(
-            VotingToken.is_active == True,
-            VotingToken.revoked == False,
-            VotingToken.expires_at > datetime.now(timezone.utc),
+    base = and_(VotingToken.election_id == election_id)
+
+    total = (
+        await db.execute(select(func.count(VotingToken.id)).where(base))
+    ).scalar() or 0
+
+    active = (
+        await db.execute(
+            select(func.count(VotingToken.id)).where(
+                and_(
+                    base,
+                    VotingToken.is_active == True,
+                    VotingToken.revoked == False,
+                    VotingToken.is_used == False,
+                    VotingToken.expires_at > datetime.now(timezone.utc),
+                )
+            )
         )
-    )).scalar() or 0
-    revoked = (await db.execute(
-        select(func.count(VotingToken.id)).where(VotingToken.revoked == True)
-    )).scalar() or 0
-    expired = (await db.execute(
-        select(func.count(VotingToken.id)).where(
-            VotingToken.expires_at < datetime.now(timezone.utc)
+    ).scalar() or 0
+
+    used = (
+        await db.execute(
+            select(func.count(VotingToken.id)).where(
+                and_(base, VotingToken.is_used == True)
+            )
         )
-    )).scalar() or 0
+    ).scalar() or 0
+
+    revoked = (
+        await db.execute(
+            select(func.count(VotingToken.id)).where(
+                and_(base, VotingToken.revoked == True, VotingToken.is_used == False)
+            )
+        )
+    ).scalar() or 0
+
+    expired = (
+        await db.execute(
+            select(func.count(VotingToken.id)).where(
+                and_(
+                    base,
+                    VotingToken.expires_at < datetime.now(timezone.utc),
+                    VotingToken.is_used == False,
+                )
+            )
+        )
+    ).scalar() or 0
 
     return {
         "total_tokens": total,
         "active_tokens": active,
+        "used_tokens": used,
         "revoked_tokens": revoked,
         "expired_tokens": expired,
     }
 
 
-async def get_electorates_with_tokens(db: AsyncSession) -> list:
-    """
-    Return electorates that have an active token, including the plaintext
-    token from the in-process display cache where available.
+# ---------------------------------------------------------------------------
+# Admin display — electorates with their current token status
+# ---------------------------------------------------------------------------
 
-    If the cache entry has expired (process restarted or >1 hour since
-    generation), the token field will be None — the admin must regenerate.
+async def get_electorates_with_tokens(
+    db: AsyncSession,
+    election_id: uuid.UUID,
+) -> list:
     """
-    from app.models.electorates import Electorate
+    Return all voters enrolled in this election who currently have an
+    active token, including the plaintext from the in-process cache.
+
+    token field will be None if:
+      - The cache has expired (>1 hour since generation, or process restarted)
+      - The token has been evicted (voter authenticated)
+    In either case token_available=False and the EC must regenerate.
+    """
+    from app.models.electorates import Electorate, ElectionVoterRoll
     from app.schemas.electorates import StudentIDConverter
 
+    # Fetch all enrolled voters with their tokens for this election
     result = await db.execute(
         select(Electorate)
+        .join(
+            ElectionVoterRoll,
+            and_(
+                ElectionVoterRoll.electorate_id == Electorate.id,
+                ElectionVoterRoll.election_id == election_id,
+            ),
+        )
         .options(selectinload(Electorate.voting_tokens))
         .where(Electorate.is_deleted == False)
     )
@@ -238,7 +460,9 @@ async def get_electorates_with_tokens(db: AsyncSession) -> list:
     for electorate in electorates:
         active_token = None
         for token in (electorate.voting_tokens or []):
-            if token.revoked or not token.is_active:
+            if token.election_id != election_id:
+                continue
+            if token.revoked or not token.is_active or token.is_used:
                 continue
             expires_at = token.expires_at
             if expires_at.tzinfo is None:
@@ -257,7 +481,7 @@ async def get_electorates_with_tokens(db: AsyncSession) -> list:
                 "phone_number": electorate.phone_number,
                 "email": electorate.email,
                 "has_voted": electorate.has_voted,
-                "token": plaintext,          # None if cache expired
+                "token": plaintext,
                 "token_available": plaintext is not None,
                 "expires_at": active_token.expires_at.isoformat(),
             })

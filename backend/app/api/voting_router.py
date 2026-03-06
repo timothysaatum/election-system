@@ -1,33 +1,49 @@
 """
-Offline Voting Router
-Votes are protected by a DB-level UNIQUE constraint on (electorate_id, portfolio_id).
-Application-level checks are a fast-path guard; the constraint is the safety net.
+Voting Router
+
+All endpoints require a valid voting-session JWT issued by POST /auth/verify-id.
+The JWT embeds election_id, voting_token_id, and session_id — these are extracted
+here so no query params are needed and clients cannot spoof a different election.
+
+VOTE SUBMISSION TRANSACTION (cast_vote)
+───────────────────────────────────────
+One atomic commit that:
+  1. Validates every vote (VotingSecurityValidator)
+  2. Inserts all Vote rows (db.flush → UniqueConstraint fires per vote)
+  3. Marks VotingToken as used (token.mark_voted())
+  4. Updates Electorate.has_voted + ElectionVoterRoll.has_voted atomically
+  5. Terminates the VotingSession
+  6. Commits once — full rollback on failure
+
+An IntegrityError on a single vote rolls back only that vote;
+remaining votes in the ballot are still attempted.
+A SQLAlchemyError on the final commit aborts everything.
 """
 
-from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from typing import List
-from datetime import datetime, timezone
 import logging
+from typing import List, Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.config import settings
-from app.middleware.auth_middleware import rate_limit_voting, get_current_voter
-from app.models.electorates import Electorate
+from app.crud.election import get_election
+from app.crud.crud_electorates import mark_electorate_voted
+from app.crud.crud_portfolios import get_active_portfolios_for_voting
+from app.crud.crud_votes import create_vote, get_votes_by_electorate
+from app.crud.crud_voting_tokens import get_voting_token_by_id
+from app.middleware.auth_middleware import get_current_voter, rate_limit_voting
+from app.middleware.voting_middleware import VotingSecurityValidator
+from app.models.electorates import Electorate, VotingSession
 from app.schemas.electorates import (
     CandidateOut,
     VoteOut,
     VotingCreation,
     VotingSessionResponse,
-)
-from app.crud.crud_portfolios import get_active_portfolios_for_voting
-from app.crud.crud_candidates import get_candidate_engine
-from app.crud.crud_votes import (
-    create_vote,
-    get_votes_by_electorate,
-    check_electorate_voted_for_portfolio,
+    StudentIDConverter,
 )
 from app.utils.security import TokenManager
 from app.utils.security_audit import SecurityAuditLogger
@@ -36,12 +52,63 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/voting", tags=["Voting"])
 
 
+# ---------------------------------------------------------------------------
+# JWT payload helpers
+# ---------------------------------------------------------------------------
+
+def _jwt_payload(request: Request) -> dict:
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return {}
+    try:
+        return TokenManager.decode_token(auth.split(" ", 1)[1])
+    except Exception:
+        return {}
+
+
+def _election_id(payload: dict) -> Optional[UUID]:
+    v = payload.get("election_id")
+    return UUID(v) if v else None
+
+
+def _voting_token_id(payload: dict) -> Optional[UUID]:
+    v = payload.get("voting_token_id")
+    return UUID(v) if v else None
+
+
+def _session_id(payload: dict) -> Optional[UUID]:
+    v = payload.get("session_id")
+    return UUID(v) if v else None
+
+
+def _require_election_id(payload: dict) -> UUID:
+    eid = _election_id(payload)
+    if not eid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session missing election context. Please re-authenticate.",
+        )
+    return eid
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return getattr(request.client, "host", "127.0.0.1") if request.client else "127.0.0.1"
+
+
+# ---------------------------------------------------------------------------
+# GET /ballot
+# ---------------------------------------------------------------------------
+
 @router.get("/ballot", response_model=List[CandidateOut])
 async def get_voting_ballot(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     electorate: Electorate = Depends(get_current_voter),
 ):
-    """Get the voting ballot (all active portfolios and their candidates)."""
+    """Return the full ballot for the active election."""
     if electorate.has_voted:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -49,11 +116,18 @@ async def get_voting_ballot(
                 "error": "already_voted",
                 "message": "You have already cast your vote",
                 "voted_at": electorate.voted_at.isoformat() if electorate.voted_at else None,
-                "student_id": electorate.student_id,
+                "student_id": StudentIDConverter.to_display(electorate.student_id),
             },
         )
-    return await get_active_portfolios_for_voting(db)
 
+    payload = _jwt_payload(request)
+    election_id = _require_election_id(payload)
+    return await get_active_portfolios_for_voting(db, election_id)
+
+
+# ---------------------------------------------------------------------------
+# POST /vote
+# ---------------------------------------------------------------------------
 
 @router.post("/vote", response_model=VotingSessionResponse)
 @rate_limit_voting
@@ -64,16 +138,12 @@ async def cast_vote(
     electorate: Electorate = Depends(get_current_voter),
 ):
     """
-    Cast votes for multiple portfolios.
+    Submit the full ballot.
 
-    Error handling is split into three tiers:
-      1. Validation errors (candidate not found, wrong portfolio) → logged, skipped
-      2. IntegrityError (DB constraint: duplicate vote) → logged, skipped
-      3. SQLAlchemyError (connection loss, etc.) → 500, entire request fails
-
-    The DB UNIQUE constraint on (electorate_id, portfolio_id) is the final
-    safety net against race conditions regardless of application-level checks.
+    Validation, insertion, token-marking, and session termination all happen
+    in one atomic transaction — committed once at the end.
     """
+    # ── Pre-flight: global has_voted guard ────────────────────────────────
     if electorate.has_voted:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -81,92 +151,92 @@ async def cast_vote(
                 "error": "already_voted",
                 "message": "You have already cast your vote. Multiple voting is not allowed.",
                 "voted_at": electorate.voted_at.isoformat() if electorate.voted_at else None,
-                "student_id": electorate.student_id,
+                "student_id": StudentIDConverter.to_display(electorate.student_id),
             },
         )
 
-    # Extract session_id from JWT for linkage
-    session_id: UUID | None = None
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        try:
-            payload = TokenManager.decode_token(auth_header.split(" ", 1)[1])
-            sid = payload.get("session_id")
-            if sid:
-                session_id = UUID(sid)
-        except Exception:
-            pass
+    # ── Extract context from JWT ──────────────────────────────────────────
+    payload = _jwt_payload(request)
+    election_id = _require_election_id(payload)
+    tok_id = _voting_token_id(payload)
+    sess_id = _session_id(payload)
+    client_ip = _client_ip(request)
+    user_agent = request.headers.get("user-agent", "offline")
 
+    if not tok_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session missing token context. Please re-authenticate.",
+        )
+
+    # ── Load election and voting token ────────────────────────────────────
+    election = await get_election(db, election_id)
+    if not election:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Election not found")
+
+    voting_token = await get_voting_token_by_id(db, tok_id)
+    if not voting_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Voting token not found. Please re-authenticate.",
+        )
+
+    # ── Validate and insert each vote ─────────────────────────────────────
     votes = []
     failed_votes = []
 
     for vote_request in vote_data.votes:
+        # Each vote is wrapped in a savepoint so an IntegrityError on one vote
+        # rolls back only that vote without invalidating the outer transaction.
+        savepoint = await db.begin_nested()
         try:
-            # ── Fast-path validation (application level) ──────────────────
-            if await check_electorate_voted_for_portfolio(
-                db, electorate.id, vote_request.portfolio_id
-            ):
-                failed_votes.append({
-                    "portfolio_id": str(vote_request.portfolio_id),
-                    "candidate_id": str(vote_request.candidate_id),
-                    "error": "Already voted for this portfolio",
-                })
-                continue
+            # Full validation — election open, token valid, voter enrolled,
+            # portfolio/candidate checks, double-vote check
+            await VotingSecurityValidator.validate_vote_request(
+                db=db,
+                voting_token=voting_token,
+                election_id=election_id,
+                electorate_id=electorate.id,
+                portfolio_id=vote_request.portfolio_id,
+                candidate_id=vote_request.candidate_id,
+                election=election,
+            )
 
-            candidate = await get_candidate_engine(db, vote_request.candidate_id)
-            if not candidate:
-                failed_votes.append({
-                    "portfolio_id": str(vote_request.portfolio_id),
-                    "candidate_id": str(vote_request.candidate_id),
-                    "error": "Candidate not found",
-                })
-                await SecurityAuditLogger.log_vote_cast(
-                    db, str(electorate.id), str(vote_request.portfolio_id),
-                    success=False, reason="candidate_not_found",
-                )
-                continue
-
-            if candidate.portfolio_id != vote_request.portfolio_id:
-                failed_votes.append({
-                    "portfolio_id": str(vote_request.portfolio_id),
-                    "candidate_id": str(vote_request.candidate_id),
-                    "error": "Candidate does not belong to this portfolio",
-                })
-                await SecurityAuditLogger.log_vote_cast(
-                    db, str(electorate.id), str(vote_request.portfolio_id),
-                    success=False, reason="candidate_portfolio_mismatch",
-                )
-                continue
-
-            if not candidate.is_active:
-                failed_votes.append({
-                    "portfolio_id": str(vote_request.portfolio_id),
-                    "candidate_id": str(vote_request.candidate_id),
-                    "error": "Candidate is not active",
-                })
-                continue
-
-            # ── Create vote (flush triggers DB constraint) ────────────────
             vote = await create_vote(
                 db=db,
                 vote_data=vote_request,
-                electorate_id=electorate.id,
-                voting_session_id=session_id,
-                ip_address="127.0.0.1",
-                user_agent="Offline",
+                voting_token_id=tok_id,
+                election_id=election_id,
+                voting_session_id=sess_id,
+                ip_address=client_ip,
+                user_agent=user_agent,
             )
+            await savepoint.commit()
             votes.append(vote)
+
             await SecurityAuditLogger.log_vote_cast(
                 db, str(electorate.id), str(vote_request.portfolio_id), success=True
             )
 
-        except IntegrityError:
-            # DB constraint caught a duplicate — roll back the failed flush
-            await db.rollback()
+        except HTTPException as exc:
+            await savepoint.rollback()
             failed_votes.append({
                 "portfolio_id": str(vote_request.portfolio_id),
                 "candidate_id": str(vote_request.candidate_id),
-                "error": "Already voted for this portfolio (duplicate)",
+                "error": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+            })
+            await SecurityAuditLogger.log_vote_cast(
+                db, str(electorate.id), str(vote_request.portfolio_id),
+                success=False,
+                reason=exc.detail if isinstance(exc.detail, str) else "validation_failed",
+            )
+
+        except IntegrityError:
+            await savepoint.rollback()
+            failed_votes.append({
+                "portfolio_id": str(vote_request.portfolio_id),
+                "candidate_id": str(vote_request.candidate_id),
+                "error": "Already voted for this portfolio (concurrent duplicate)",
             })
             await SecurityAuditLogger.log_vote_cast(
                 db, str(electorate.id), str(vote_request.portfolio_id),
@@ -174,10 +244,9 @@ async def cast_vote(
             )
 
         except SQLAlchemyError as exc:
-            # Infrastructure failure — abort the whole request
-            await db.rollback()
+            await savepoint.rollback()
             logger.error(
-                "Database error during vote for electorate %s portfolio %s: %s",
+                "DB error — electorate %s portfolio %s: %s",
                 electorate.id, vote_request.portfolio_id, exc,
             )
             raise HTTPException(
@@ -185,29 +254,41 @@ async def cast_vote(
                 detail="Database error while recording vote. Please retry.",
             )
 
-    # ── Mark electorate as voted if any vote succeeded ───────────────────────
+    # ── Atomically finalize if any votes succeeded ────────────────────────
     if votes:
-        electorate.has_voted = True
-        electorate.voted_at = datetime.now(timezone.utc)
+        # 1. Mark token consumed (is_used=True, is_active=False)
+        voting_token.mark_voted()
+
+        # 2. Update Electorate.has_voted + ElectionVoterRoll.has_voted in one call
+        await mark_electorate_voted(db, electorate.id, election_id)
+
+        # 3. Terminate the voting session
+        if sess_id:
+            session_result = await db.execute(
+                select(VotingSession).where(VotingSession.id == sess_id)
+            )
+            session = session_result.scalar_one_or_none()
+            if session:
+                session.mark_submitted()
 
     try:
         await db.commit()
     except SQLAlchemyError as exc:
         await db.rollback()
-        logger.error("Failed to commit votes for electorate %s: %s", electorate.id, exc)
+        logger.error("Failed to commit ballot — electorate %s: %s", electorate.id, exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Failed to save votes. Please retry.",
         )
 
-    # ── Response ──────────────────────────────────────────────────────────────
+    # ── Response ──────────────────────────────────────────────────────────
     success = len(votes) > 0
     if success and not failed_votes:
         message = f"Successfully cast {len(votes)} vote(s)"
-    elif success and failed_votes:
+    elif success:
         message = f"Cast {len(votes)} vote(s); {len(failed_votes)} failed"
     else:
-        message = "All votes failed"
+        message = "No votes were cast"
 
     return VotingSessionResponse(
         success=success,
@@ -217,27 +298,62 @@ async def cast_vote(
     )
 
 
-@router.get("/my-votes", response_model=List[VoteOut])
+# ---------------------------------------------------------------------------
+# GET /my-votes
+# ---------------------------------------------------------------------------
+
+@router.get("/my-votes")
 async def get_my_votes(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     electorate: Electorate = Depends(get_current_voter),
 ):
-    """Get all votes cast by the current electorate."""
-    return await get_votes_by_electorate(db, electorate.id)
+    """
+    Return a summary of the votes cast by the current voter in this election.
 
+    NOTE: Full VoteOut (which includes voting_token_id) is intentionally NOT
+    returned here — exposing voting_token_id to the voter partially undermines
+    the anonymization design.  Only the portfolio/candidate choices are shown,
+    which is sufficient for a voter to confirm their ballot was recorded.
+    """
+    payload = _jwt_payload(request)
+    election_id = _require_election_id(payload)
+    votes = await get_votes_by_electorate(db, electorate.id, election_id)
+    return [
+        {
+            "portfolio_id": str(v.portfolio_id),
+            "candidate_id": str(v.candidate_id),
+            "vote_type": v.vote_type,
+            "voted_at": v.voted_at.isoformat(),
+        }
+        for v in votes
+    ]
+
+
+# ---------------------------------------------------------------------------
+# GET /status
+# ---------------------------------------------------------------------------
 
 @router.get("/status")
 async def get_voting_status(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     electorate: Electorate = Depends(get_current_voter),
 ):
-    """Get current voting status for the authenticated electorate."""
-    votes = await get_votes_by_electorate(db, electorate.id)
+    """Return the current voter's voting status for this election."""
+    payload = _jwt_payload(request)
+    election_id = _election_id(payload)
+
+    votes_cast = 0
+    if election_id:
+        votes = await get_votes_by_electorate(db, electorate.id, election_id)
+        votes_cast = len(votes)
+
     return {
         "has_voted": electorate.has_voted,
         "voted_at": electorate.voted_at.isoformat() if electorate.voted_at else None,
-        "votes_cast": len(votes),
-        "student_id": electorate.student_id,
+        "votes_cast": votes_cast,
+        "student_id": StudentIDConverter.to_display(electorate.student_id),
         "can_vote": not electorate.has_voted,
     }
 

@@ -1,5 +1,5 @@
-import { useState, useMemo, useRef } from 'react';
-import { Plus, Edit2, Trash2, Upload, Download, FileSpreadsheet, Search, Printer, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { Plus, Edit2, Trash2, Upload, Download, FileSpreadsheet, Search, Printer, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 import { ConfirmModal, AlertModal } from './Modal';
 import { ToastContainer } from './Toast';
@@ -12,13 +12,44 @@ const formatStudentId = (studentId) => {
   return studentId.replace(/-/g, '/');
 };
 
-export const ElectorateManager = ({ electorates, onUpdate }) => {
+export const ElectorateManager = ({ electorates: electoratesProp, onUpdate, activeElection }) => {
+  // --- Self-managed voter list ---
+  // We do NOT rely solely on the prop because admin.jsx may have been capped
+  // at 1000 rows by a backend limit. ElectorateManager fetches the full list
+  // itself via api.getAllElectorates() which walks pages until exhausted.
+  const [electorates, setElectorates] = useState(electoratesProp || []);
+  const [fetchLoading, setFetchLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterProgram, setFilterProgram] = useState('');
+
+  // Fetch the full voter list on mount and whenever the active election changes.
+  // This bypasses the prop (which may be capped at 1000) by calling
+  // api.getAllElectorates() which walks all backend pages.
+  const fetchAllElectorates = useCallback(async () => {
+    if (!api.getActiveElectionId()) return;
+    setFetchLoading(true);
+    try {
+      const all = await api.getAllElectorates();
+      setElectorates(all);
+    } catch (err) {
+      // Fall back to whatever the parent passed in
+      setElectorates(electoratesProp || []);
+    } finally {
+      setFetchLoading(false);
+    }
+  }, [electoratesProp]);
+
+  useEffect(() => { fetchAllElectorates(); }, [activeElection?.id]);
+
+  // When parent triggers a full refresh, re-fetch too
+  const handleUpdate = useCallback(async () => {
+    await onUpdate();
+    await fetchAllElectorates();
+  }, [onUpdate, fetchAllElectorates]);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -229,7 +260,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
         await api.createElectorate(payload);
       }
       resetForm();
-      onUpdate();
+      handleUpdate();
 
       toast.showSuccess(`Voter ${editingId ? 'updated' : 'created'} successfully`);
     } catch (err) {
@@ -278,7 +309,7 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
 
     try {
       await api.deleteElectorate(id);
-      onUpdate();
+      handleUpdate();
       toast.showSuccess('Voter deleted successfully');
     } catch (err) {
       await alertModal.showAlert({
@@ -313,24 +344,37 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
       return;
     }
 
+    // Guard — election must be selected before uploading
+    if (!api.getActiveElectionId()) {
+      await alertModal.showAlert({
+        title: 'No Election Selected',
+        message: 'Please select an active election before uploading voters.',
+        type: 'error'
+      });
+      return;
+    }
+
     try {
       setUploading(true);
       setUploadResult(null);
 
+      // result is now a summary: { inserted, existing_skipped, total, voter_roll_sync }
       const result = await api.bulkUploadElectorates(file);
+
+      const message = `Uploaded ${result.total} voters — ${result.inserted} new, ${result.existing_skipped} already existed. Voter roll sync: ${result.voter_roll_sync}.`;
 
       setUploadResult({
         success: true,
-        count: result.length,
-        message: `Successfully uploaded ${result.length} voters!`
+        count: result.inserted,
+        message,
       });
 
-      onUpdate();
+      handleUpdate();
 
       // Clear file input
       e.target.value = '';
 
-      toast.showSuccess(`Successfully uploaded ${result.length} voters!`);
+      toast.showSuccess(`${result.inserted} new voters added. Voter roll syncing in background.`);
     } catch (err) {
       setUploadResult({
         success: false,
@@ -380,9 +424,24 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
         <div className="flex justify-between items-center mb-6">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">Voters (Electorates)</h2>
-            <p className="text-sm text-gray-600 mt-1">{stats.total} total • {stats.voted} voted ({Math.round(stats.voted / stats.total * 100) || 0}%) • {stats.tokenized} tokenized</p>
+            <p className="text-sm text-gray-600 mt-1">
+              {fetchLoading
+                ? <span className="flex items-center gap-1.5"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Loading all voters…</span>
+                : <>{stats.total} total • {stats.voted} voted ({Math.round(stats.voted / stats.total * 100) || 0}%) • {stats.tokenized} tokenized</>
+              }
+            </p>
           </div>
           <div className="flex gap-2">
+            <button
+              onClick={fetchAllElectorates}
+              disabled={fetchLoading}
+              className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+              title="Reload full voter list from server"
+            >
+              <RefreshCw className={`h-5 w-5 ${fetchLoading ? 'animate-spin' : ''}`} />
+              {fetchLoading ? 'Loading…' : 'Refresh'}
+            </button>
+
             <button
               onClick={downloadTemplate}
               className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"

@@ -18,6 +18,7 @@ from app.api.portfolio_router import router as portfolio_router
 from app.api.admin_router import router as admin_router
 from app.api.results_router import router as results_router
 from app.api.candidate_routes import router as candidate_router
+from app.api.election_router import router as election_router
 
 settings = Settings()
 
@@ -40,6 +41,7 @@ app.include_router(electorate_router, prefix=settings.API_PREFIX)
 app.include_router(auth_router, prefix=settings.API_PREFIX)
 app.include_router(voting_router, prefix=settings.API_PREFIX)
 app.include_router(results_router, prefix=settings.API_PREFIX)
+app.include_router(election_router, prefix=settings.API_PREFIX)
 
 # CORS middleware for local network access
 origins = [

@@ -1,14 +1,6 @@
 """
-Offline Election System Authentication Middleware
+Election System Authentication Middleware
 Role-based auth, per-token failure lockout, and in-process rate limiting.
-
-NOTE ON RATE LIMITING:
-  The in-memory RateLimiter below is per-worker-process.  With WORKERS=4,
-  the effective limit is RATE_LIMIT_AUTH_REQUESTS × 4 across all workers.
-  Settings are intentionally conservative (5 attempts / 5 min) so that even
-  in the worst case (4 workers × 5) = 20 attempts remain well below the
-  ~1M token space.  The per-token failure lockout (TOKEN_MAX_FAILURES=5) is
-  the primary brute-force defence and IS enforced at DB level per token.
 """
 
 import os
@@ -27,7 +19,7 @@ import time
 from app.core.database import get_db
 from app.core.config import settings
 from app.models.electorates import Electorate, VotingSession
-from app.utils.security import TokenManager, verify_password
+from app.utils.security import TokenManager
 from sqlalchemy.future import select
 
 logger = logging.getLogger(__name__)
@@ -107,7 +99,7 @@ def _get_permissions_for_role(role: str) -> List[str]:
         "admin": [
             "manage_portfolios",
             "manage_candidates",
-            "manage_elections",
+            "manage_election",      # was "manage_elections" — must match require_permission("manage_election") in election_router.py
             "manage_electorates",
             "generate_tokens",
             "view_results",

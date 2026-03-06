@@ -33,7 +33,7 @@ export const CandidateManager = ({ candidates, portfolios, onUpdate }) => {
     const filteredData = candidates.filter(c =>
       (c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (c.bio && c.bio.toLowerCase().includes(searchTerm.toLowerCase()))) &&
-      (!filterPortfolio || c.portfolio_id === parseInt(filterPortfolio))
+      (!filterPortfolio || String(c.portfolio_id) === String(filterPortfolio))
     );
 
     const htmlContent = `
@@ -113,7 +113,7 @@ export const CandidateManager = ({ candidates, portfolios, onUpdate }) => {
     candidates.filter(c =>
       (c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (c.bio && c.bio.toLowerCase().includes(searchTerm.toLowerCase()))) &&
-      (!filterPortfolio || c.portfolio_id === parseInt(filterPortfolio))
+      (!filterPortfolio || String(c.portfolio_id) === String(filterPortfolio))
     ), [candidates, searchTerm, filterPortfolio]);
 
   const getImageUrl = (url) => {

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Key,
   ChevronLeft,
@@ -7,100 +7,116 @@ import {
   ChevronsRight,
   Search,
   Filter,
-  X
+  X,
+  RefreshCw,
 } from "lucide-react";
+import { api } from "../services/api";
 
-// Helper function to format student ID for display (convert hyphens to slashes)
 const formatStudentId = (studentId) => {
   if (!studentId) return studentId;
   return studentId.replace(/-/g, '/');
 };
 
+// Single source of truth for token status
+// Priority: voted → "token_used" | has token → "has_token" | no token → "no_token"
+const getTokenStatus = (electorate) => {
+  if (electorate.has_voted) return "token_used";
+  if (electorate.voting_token) return "has_token";
+  return "no_token";
+};
+
+const StatusBadge = ({ electorate }) => {
+  const status = getTokenStatus(electorate);
+  if (status === "token_used") {
+    return (
+      <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+        Token Used
+      </span>
+    );
+  }
+  if (status === "has_token") {
+    return (
+      <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+        Token Issued
+      </span>
+    );
+  }
+  return (
+    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+      No Token
+    </span>
+  );
+};
+
 export const VoterList = ({
-  electorates,
-  loading,
+  electorates: electoratesProp,
+  loading: loadingProp,
   generatingFor,
   onGenerateToken,
 }) => {
-  // Pagination state
+  const [electorates, setElectorates] = useState(electoratesProp || []);
+  const [fetchLoading, setFetchLoading] = useState(false);
+  const loading = loadingProp || fetchLoading;
+
+  const fetchAll = useCallback(async () => {
+    if (!api.getActiveElectionId()) return;
+    setFetchLoading(true);
+    try {
+      const all = await api.getAllElectorates();
+      setElectorates(all);
+    } catch {
+      setElectorates(electoratesProp || []);
+    } finally {
+      setFetchLoading(false);
+    }
+  }, [electoratesProp]);
+
+  useEffect(() => { fetchAll(); }, [api.getActiveElectionId()]);
+
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-
-  // Search and filter state
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all"); // all, has_token, no_token, voted
+  const [statusFilter, setStatusFilter] = useState("all");
   const [programFilter, setProgramFilter] = useState("all");
 
-  // Get unique programs for filter
   const programs = useMemo(() => {
     if (!electorates) return [];
-    const uniquePrograms = [...new Set(electorates.map(e => e.program).filter(Boolean))];
-    return uniquePrograms.sort();
+    return [...new Set(electorates.map(e => e.program).filter(Boolean))].sort();
   }, [electorates]);
 
-  // Filter and search data
   const filteredData = useMemo(() => {
     if (!electorates || electorates.length === 0) return [];
-
     return electorates.filter((electorate) => {
-      // Search filter - search in formatted (slash) version
       const formattedId = formatStudentId(electorate.student_id);
       const matchesSearch =
         formattedId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         electorate.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         electorate.program?.toLowerCase().includes(searchTerm.toLowerCase());
-
       if (!matchesSearch) return false;
 
-      // Status filter
-      if (statusFilter === "has_token" && !electorate.voting_token) return false;
-      if (statusFilter === "no_token" && electorate.voting_token) return false;
-      if (statusFilter === "voted" && !electorate.has_voted) return false;
-      if (statusFilter === "not_voted" && electorate.has_voted) return false;
+      // Status filter uses getTokenStatus — same logic everywhere
+      if (statusFilter !== "all" && getTokenStatus(electorate) !== statusFilter) return false;
 
-      // Program filter
       if (programFilter !== "all" && electorate.program !== programFilter) return false;
-
       return true;
     });
   }, [electorates, searchTerm, statusFilter, programFilter]);
 
-  // Calculate pagination
   const totalItems = filteredData.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage);
 
-  // Get current page data
   const paginatedData = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    return filteredData.slice(startIndex, endIndex);
+    return filteredData.slice(startIndex, startIndex + itemsPerPage);
   }, [filteredData, currentPage, itemsPerPage]);
 
-  // Calculate showing range
   const showingFrom = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
   const showingTo = Math.min(currentPage * itemsPerPage, totalItems);
 
-  // Reset to page 1 when filters change
-  const handleSearchChange = (value) => {
-    setSearchTerm(value);
-    setCurrentPage(1);
-  };
-
-  const handleStatusFilterChange = (value) => {
-    setStatusFilter(value);
-    setCurrentPage(1);
-  };
-
-  const handleProgramFilterChange = (value) => {
-    setProgramFilter(value);
-    setCurrentPage(1);
-  };
-
-  const handleItemsPerPageChange = (e) => {
-    const newItemsPerPage = parseInt(e.target.value);
-    setItemsPerPage(newItemsPerPage);
-    setCurrentPage(1);
-  };
+  const handleSearchChange = (value) => { setSearchTerm(value); setCurrentPage(1); };
+  const handleStatusFilterChange = (value) => { setStatusFilter(value); setCurrentPage(1); };
+  const handleProgramFilterChange = (value) => { setProgramFilter(value); setCurrentPage(1); };
+  const handleItemsPerPageChange = (e) => { setItemsPerPage(parseInt(e.target.value)); setCurrentPage(1); };
 
   const clearFilters = () => {
     setSearchTerm("");
@@ -109,39 +125,26 @@ export const VoterList = ({
     setCurrentPage(1);
   };
 
-  // Page navigation
   const goToFirstPage = () => setCurrentPage(1);
   const goToLastPage = () => setCurrentPage(totalPages);
   const goToNextPage = () => setCurrentPage((prev) => Math.min(prev + 1, totalPages));
   const goToPreviousPage = () => setCurrentPage((prev) => Math.max(prev - 1, 1));
   const goToPage = (page) => setCurrentPage(page);
 
-  // Generate page numbers
   const getPageNumbers = () => {
     const pages = [];
     const maxVisible = 5;
-
     if (totalPages <= maxVisible) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
     } else {
       let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
       let endPage = Math.min(totalPages, startPage + maxVisible - 1);
-
-      if (endPage - startPage < maxVisible - 1) {
-        startPage = Math.max(1, endPage - maxVisible + 1);
-      }
-
-      for (let i = startPage; i <= endPage; i++) {
-        pages.push(i);
-      }
+      if (endPage - startPage < maxVisible - 1) startPage = Math.max(1, endPage - maxVisible + 1);
+      for (let i = startPage; i <= endPage; i++) pages.push(i);
     }
-
     return pages;
   };
 
-  // Check if any filters are active
   const hasActiveFilters = searchTerm || statusFilter !== "all" || programFilter !== "all";
 
   if (loading) {
@@ -167,21 +170,26 @@ export const VoterList = ({
       <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900">
-              Voter List - Generate Tokens
-            </h2>
+            <h2 className="text-xl font-semibold text-gray-900">Voter List - Generate Tokens</h2>
             <p className="text-sm text-gray-600 mt-1">
-              Total: {electorates.length} voters
-              {filteredData.length !== electorates.length && (
-                <span className="text-indigo-600 font-semibold"> • Showing: {filteredData.length} filtered</span>
-              )}
+              {fetchLoading
+                ? <span className="flex items-center gap-1.5"><RefreshCw className="h-3.5 w-3.5 animate-spin inline" /> Loading all voters…</span>
+                : <>Total: <strong>{electorates.length}</strong> voters{filteredData.length !== electorates.length && <span className="text-indigo-600 font-semibold"> • Showing: {filteredData.length} filtered</span>}</>
+              }
             </p>
           </div>
+          <button
+            onClick={fetchAll}
+            disabled={fetchLoading}
+            className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${fetchLoading ? 'animate-spin' : ''}`} />
+            {fetchLoading ? 'Loading…' : 'Refresh'}
+          </button>
         </div>
 
         {/* Filters */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Search */}
           <div className="md:col-span-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -193,17 +201,15 @@ export const VoterList = ({
                 className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               />
               {searchTerm && (
-                <button
-                  onClick={() => handleSearchChange("")}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
+                <button onClick={() => handleSearchChange("")}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600">
                   <X className="h-5 w-5" />
                 </button>
               )}
             </div>
           </div>
 
-          {/* Status Filter */}
+          {/* Status filter — options match getTokenStatus() values */}
           <div>
             <select
               value={statusFilter}
@@ -211,14 +217,12 @@ export const VoterList = ({
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             >
               <option value="all">All Status</option>
-              <option value="has_token">Has Token</option>
               <option value="no_token">No Token</option>
-              <option value="voted">Voted</option>
-              <option value="not_voted">Not Voted</option>
+              <option value="has_token">Token Issued</option>
+              <option value="token_used">Token Used</option>
             </select>
           </div>
 
-          {/* Program Filter */}
           <div>
             <select
               value={programFilter}
@@ -227,25 +231,19 @@ export const VoterList = ({
             >
               <option value="all">All Programs</option>
               {programs.map((program) => (
-                <option key={program} value={program}>
-                  {program}
-                </option>
+                <option key={program} value={program}>{program}</option>
               ))}
             </select>
           </div>
         </div>
 
-        {/* Active filters & Clear button */}
         {hasActiveFilters && (
           <div className="mt-3 flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm">
               <Filter className="h-4 w-4 text-gray-500" />
               <span className="text-gray-600">Filters active</span>
             </div>
-            <button
-              onClick={clearFilters}
-              className="text-sm text-indigo-600 hover:text-indigo-700 font-medium"
-            >
+            <button onClick={clearFilters} className="text-sm text-indigo-600 hover:text-indigo-700 font-medium">
               Clear all filters
             </button>
           </div>
@@ -257,10 +255,7 @@ export const VoterList = ({
         {filteredData.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-gray-600">No voters match your filters.</p>
-            <button
-              onClick={clearFilters}
-              className="mt-4 text-indigo-600 hover:text-indigo-700 font-medium"
-            >
+            <button onClick={clearFilters} className="mt-4 text-indigo-600 hover:text-indigo-700 font-medium">
               Clear filters
             </button>
           </div>
@@ -268,34 +263,21 @@ export const VoterList = ({
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  #
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Student ID
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Name
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Program
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Action
-                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student ID</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Program</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {paginatedData.map((electorate, index) => {
                 const globalIndex = (currentPage - 1) * itemsPerPage + index + 1;
+                const status = getTokenStatus(electorate);
                 return (
                   <tr key={electorate.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {globalIndex}
-                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{globalIndex}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       {formatStudentId(electorate.student_id)}
                     </td>
@@ -306,26 +288,11 @@ export const VoterList = ({
                       {electorate.program || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        {electorate.voting_token ? (
-                          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                            Token Generated
-                          </span>
-                        ) : (
-                          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
-                            No Token
-                          </span>
-                        )}
-                        {electorate.has_voted && (
-                          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
-                            Voted
-                          </span>
-                        )}
-                      </div>
+                      <StatusBadge electorate={electorate} />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      {electorate.has_voted ? (
-                        <span className="text-gray-500">Voted</span>
+                      {status === "token_used" ? (
+                        <span className="text-gray-400 italic">Token Used</span>
                       ) : (
                         <button
                           onClick={() => onGenerateToken(electorate)}
@@ -334,12 +301,8 @@ export const VoterList = ({
                         >
                           <Key className="h-4 w-4" />
                           {generatingFor === electorate.id
-                            ? electorate.voting_token
-                              ? "Regenerating..."
-                              : "Generating..."
-                            : electorate.voting_token
-                              ? "Regenerate Token"
-                              : "Generate Token"}
+                            ? status === "has_token" ? "Regenerating..." : "Generating..."
+                            : status === "has_token" ? "Regenerate Token" : "Generate Token"}
                         </button>
                       )}
                     </td>
@@ -355,19 +318,14 @@ export const VoterList = ({
       {filteredData.length > 0 && (
         <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            {/* Showing info & Items per page */}
             <div className="flex items-center gap-4">
               <div className="text-sm text-gray-600">
                 Showing <span className="font-semibold text-gray-900">{showingFrom}</span> to{" "}
                 <span className="font-semibold text-gray-900">{showingTo}</span> of{" "}
                 <span className="font-semibold text-gray-900">{totalItems}</span> voters
               </div>
-
-              {/* Items per page selector */}
               <div className="flex items-center gap-2">
-                <label htmlFor="itemsPerPage" className="text-sm text-gray-600">
-                  Show:
-                </label>
+                <label htmlFor="itemsPerPage" className="text-sm text-gray-600">Show:</label>
                 <select
                   id="itemsPerPage"
                   value={itemsPerPage}
@@ -382,66 +340,34 @@ export const VoterList = ({
               </div>
             </div>
 
-            {/* Pagination controls */}
             <div className="flex items-center gap-2">
-              {/* First page */}
-              <button
-                onClick={goToFirstPage}
-                disabled={currentPage === 1}
-                className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="First page"
-              >
+              <button onClick={goToFirstPage} disabled={currentPage === 1}
+                className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                 <ChevronsLeft className="h-4 w-4 text-gray-600" />
               </button>
-
-              {/* Previous page */}
-              <button
-                onClick={goToPreviousPage}
-                disabled={currentPage === 1}
-                className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="Previous page"
-              >
+              <button onClick={goToPreviousPage} disabled={currentPage === 1}
+                className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                 <ChevronLeft className="h-4 w-4 text-gray-600" />
               </button>
-
-              {/* Page numbers */}
               <div className="hidden sm:flex items-center gap-1">
                 {getPageNumbers().map((pageNum) => (
-                  <button
-                    key={pageNum}
-                    onClick={() => goToPage(pageNum)}
+                  <button key={pageNum} onClick={() => goToPage(pageNum)}
                     className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${currentPage === pageNum
                       ? "bg-indigo-600 text-white"
-                      : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
-                      }`}
-                  >
+                      : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
                     {pageNum}
                   </button>
                 ))}
               </div>
-
-              {/* Mobile page indicator */}
               <div className="sm:hidden px-3 py-1.5 text-sm text-gray-700">
                 Page {currentPage} of {totalPages}
               </div>
-
-              {/* Next page */}
-              <button
-                onClick={goToNextPage}
-                disabled={currentPage === totalPages}
-                className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="Next page"
-              >
+              <button onClick={goToNextPage} disabled={currentPage === totalPages}
+                className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                 <ChevronRight className="h-4 w-4 text-gray-600" />
               </button>
-
-              {/* Last page */}
-              <button
-                onClick={goToLastPage}
-                disabled={currentPage === totalPages}
-                className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="Last page"
-              >
+              <button onClick={goToLastPage} disabled={currentPage === totalPages}
+                className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                 <ChevronsRight className="h-4 w-4 text-gray-600" />
               </button>
             </div>
