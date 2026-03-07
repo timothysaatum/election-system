@@ -11,8 +11,8 @@ import { Dashboard } from "../components/Dashboard";
 import { PortfolioManager } from "../components/PortfolioManager";
 import { CandidateManager } from "../components/CandidateManager";
 import { ElectorateManager } from "../components/ElectorateManager";
+import { ElectionManager } from "../components/ElectionManager";
 import { ResultsView } from "../components/ResultsView";
-import TokenGenerator from '../components/TokenGenerator';
 
 const Admin = () => {
   const navigate = useNavigate();
@@ -28,32 +28,30 @@ const Admin = () => {
   const [candidates, setCandidates] = useState([]);
   const [electorates, setElectorates] = useState([]);
   const [results, setResults] = useState([]);
+  const [elections, setElections] = useState([]);
 
   const alertModal = useModal();
   const toast = useToast();
 
+  // Derived: the one active election (for navbar display)
+  const activeElection = elections.find(e => e.is_active) || null;
+
   const loadData = useCallback(async () => {
     try {
-      // Paginated fetch for electorates to load all records regardless of total count
       const fetchAllElectorates = async () => {
         const pageSize = 500;
         let skip = 0;
         let allElectorates = [];
         let hasMore = true;
-
         while (hasMore) {
           const batch = await api.getElectorates(skip, pageSize);
-          if (!batch || batch.length === 0) {
-            hasMore = false;
-          } else {
+          if (!batch || batch.length === 0) { hasMore = false; }
+          else {
             allElectorates = [...allElectorates, ...batch];
             skip += pageSize;
-            if (batch.length < pageSize) {
-              hasMore = false;
-            }
+            if (batch.length < pageSize) hasMore = false;
           }
         }
-
         return allElectorates;
       };
 
@@ -63,12 +61,14 @@ const Admin = () => {
         candidatesData,
         electoratesData,
         resultsData,
+        electionsData,
       ] = await Promise.all([
         api.getStatistics().catch(() => null),
         api.getPortfolios().catch(() => []),
         api.getCandidates().catch(() => []),
         fetchAllElectorates().catch(() => []),
         api.getResults().catch(() => []),
+        api.getElections().catch(() => []),
       ]);
 
       setStats(statsData);
@@ -76,6 +76,7 @@ const Admin = () => {
       setCandidates(candidatesData || []);
       setElectorates(electoratesData || []);
       setResults(resultsData || []);
+      setElections(electionsData || []);
     } catch (err) {
       console.error("Failed to load data:", err);
       await alertModal.showAlert({
@@ -88,23 +89,14 @@ const Admin = () => {
 
   const checkAuth = useCallback(async () => {
     const token = localStorage.getItem("admin_token");
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-
+    if (!token) { setLoading(false); return; }
     try {
       const data = await api.verify();
-
-      console.log("Admin page - User data:", data);
-
-      // Only allow admin role - redirect others
       if (data.role === "admin") {
         setAdminData(data);
         setIsAuthenticated(true);
         await loadData();
       } else {
-        // Redirect to appropriate page based on role
         const correctRoute = api.getRoleBasedRoute(data.role);
         localStorage.removeItem("admin_token");
         toast.showError(`This page is for admins only. Redirecting to ${data.role} portal...`);
@@ -125,14 +117,9 @@ const Admin = () => {
     }
   }, [alertModal, navigate, toast, loadData]);
 
-  useEffect(() => {
-    checkAuth();
-  }, []);
+  useEffect(() => { checkAuth(); }, []);
 
   const handleLogin = async (data) => {
-    console.log("Login response:", data);
-
-    // Verify role access after login
     if (data.role === "admin") {
       setAdminData(data);
       setIsAuthenticated(true);
@@ -146,7 +133,6 @@ const Admin = () => {
         setLoading(false);
       }
     } else {
-      // Redirect to correct portal
       const correctRoute = api.getRoleBasedRoute(data.role);
       toast.showInfo(`You are logged in as ${data.role}. Redirecting to your portal...`);
       setTimeout(() => navigate(correctRoute), 2000);
@@ -164,6 +150,7 @@ const Admin = () => {
     setCandidates([]);
     setElectorates([]);
     setResults([]);
+    setElections([]);
     navigate('/');
   };
 
@@ -194,51 +181,81 @@ const Admin = () => {
     return (
       <>
         <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
-        <AlertModal
-          {...alertModal}
-          onClose={alertModal.handleClose}
-          {...alertModal.modalProps}
-        />
+        <AlertModal {...alertModal} onClose={alertModal.handleClose} {...alertModal.modalProps} />
         <Login onLogin={handleLogin} />
       </>
     );
   }
 
+  const tabs = ["dashboard", "elections", "portfolios", "candidates", "voters", "results"];
+
   return (
     <div className="min-h-screen bg-gray-50">
       <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
-      <AlertModal
-        {...alertModal}
-        onClose={alertModal.handleClose}
-        {...alertModal.modalProps}
-      />
+      <AlertModal {...alertModal} onClose={alertModal.handleClose} {...alertModal.modalProps} />
 
-      {/* Header */}
+      {/* ── Header ── */}
       <header className="bg-white shadow-sm sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Electoral Commissioner</h1>
-              <p className="text-sm text-gray-600">
-                Welcome, {adminData?.username} <span className="text-blue-600 font-medium">(Admin)</span>
-              </p>
+
+            {/* Left: logo + election name */}
+            <div className="flex items-center gap-3">
+              {activeElection?.logo_url ? (
+                <img
+                  src={
+                    activeElection.logo_url.startsWith('http')
+                      ? activeElection.logo_url
+                      : (process.env.REACT_APP_API_URL || '/api').replace(/\/api$/, '') +
+                      (activeElection.logo_url.startsWith('/') ? '' : '/') +
+                      activeElection.logo_url
+                  }
+                  alt={activeElection.name}
+                  className="h-10 w-10 rounded-xl object-contain border border-slate-200 bg-white shadow-sm"
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              ) : (
+                /* Fallback monogram when no logo */
+                <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center shadow-sm flex-shrink-0">
+                  <span className="text-white font-bold text-sm">
+                    {activeElection
+                      ? activeElection.name.charAt(0).toUpperCase()
+                      : 'EC'}
+                  </span>
+                </div>
+              )}
+              <div>
+                <h1 className="text-lg font-bold text-gray-900 leading-tight">
+                  {activeElection ? activeElection.name : 'Electoral Commissioner'}
+                </h1>
+                <p className="text-xs text-gray-500">
+                  Welcome, <span className="font-medium text-gray-700">{adminData?.username}</span>
+                  <span className="ml-1 text-blue-600 font-medium">(Admin)</span>
+                </p>
+              </div>
             </div>
-            <div className="flex items-center gap-4">
+
+            {/* Right: refresh + logout */}
+            <div className="flex items-center gap-3">
+              {activeElection && (
+                <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold rounded-full">
+                  <span className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-pulse inline-block" />
+                  LIVE
+                </span>
+              )}
               <button
                 onClick={refreshData}
                 disabled={refreshing}
                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
                 title="Refresh Data"
               >
-                <RefreshCw
-                  className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`}
-                />
+                <RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} />
               </button>
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
               >
-                <LogOut className="h-5 w-5" />
+                <LogOut className="h-4 w-4" />
                 Logout
               </button>
             </div>
@@ -246,18 +263,11 @@ const Admin = () => {
         </div>
       </header>
 
-      {/* Navigation */}
-      <nav className="bg-white shadow-sm border-t border-gray-200 sticky top-[73px] z-10">
+      {/* ── Navigation ── */}
+      <nav className="bg-white shadow-sm border-t border-gray-200 sticky top-[65px] z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex space-x-8 overflow-x-auto">
-            {[
-              "dashboard",
-              "portfolios",
-              "candidates",
-              "voters",
-              "tokens",
-              "results",
-            ].map((tab) => (
+          <div className="flex space-x-6 overflow-x-auto">
+            {tabs.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -273,39 +283,31 @@ const Admin = () => {
         </div>
       </nav>
 
-      {/* Main Content */}
+      {/* ── Main Content ── */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === "dashboard" && (
-          <Dashboard
-            stats={stats}
-            electorates={electorates}
-            onRefresh={refreshData}
-          />
+          <Dashboard stats={stats} electorates={electorates} onRefresh={refreshData} />
+        )}
+        {activeTab === "elections" && (
+          <ElectionManager elections={elections} onUpdate={refreshData} />
         )}
         {activeTab === "portfolios" && (
           <PortfolioManager portfolios={portfolios} onUpdate={refreshData} />
         )}
         {activeTab === "candidates" && (
-          <CandidateManager
-            candidates={candidates}
-            portfolios={portfolios}
-            onUpdate={refreshData}
-          />
+          <CandidateManager candidates={candidates} portfolios={portfolios} onUpdate={refreshData} />
         )}
         {activeTab === "voters" && (
           <ElectorateManager electorates={electorates} onUpdate={refreshData} />
         )}
-        {activeTab === "tokens" && (
-          <TokenGenerator electorates={electorates} onUpdate={refreshData} />
-        )}
         {activeTab === "results" && <ResultsView results={results} />}
       </main>
 
-      {/* Footer */}
+      {/* ── Footer ── */}
       <footer className="bg-white border-t border-gray-200 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <p className="text-center text-sm text-gray-500">
-            Election Management System © 2026
+            {activeElection ? activeElection.name : 'Election Management System'} © {new Date().getFullYear()}
           </p>
         </div>
       </footer>

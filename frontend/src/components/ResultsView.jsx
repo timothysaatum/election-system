@@ -1,410 +1,522 @@
-import { Trophy, TrendingUp, Printer, Award, BarChart3, Users } from 'lucide-react';
-import { useMemo, useState, useRef } from 'react';
+import { Trophy, Printer, Award, Users, CheckCircle, XCircle, MinusCircle, TrendingUp, BarChart2, Star, Handshake } from 'lucide-react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const getImageUrl = (url) => {
+  if (!url) return null;
+  if (url.startsWith('http')) return url;
+  return url.startsWith('/') ? url : `/${url}`;
+};
+
+const isSingleCandidate = (result) => result.candidates.length === 1;
+
+/**
+ * resolveWinner:
+ *   - Returns the winner object if the backend sent one (non-null, has votes).
+ *   - Returns the string "tie" if multiple candidates share the top endorsed count.
+ *   - Returns null if no votes yet or genuinely no winner.
+ */
+const resolveWinner = (result) => {
+  if (result.total_votes === 0) return null;
+
+  // Backend already resolves ties — winner is null on a tie
+  if (result.winner && (result.winner.vote_count || 0) > 0) {
+    return result.winner;
+  }
+
+  // Detect tie: two or more candidates sharing the highest endorsed count
+  if (!result.winner && result.candidates.length > 1) {
+    const maxVotes = Math.max(...result.candidates.map(c => c.vote_count || 0));
+    if (maxVotes > 0) {
+      const tied = result.candidates.filter(c => (c.vote_count || 0) === maxVotes);
+      if (tied.length > 1) return "tie";
+    }
+  }
+
+  return null;
+};
+
+// ---------------------------------------------------------------------------
+// Animated number
+// ---------------------------------------------------------------------------
+const AnimatedNumber = ({ value, duration = 1200 }) => {
+  const [display, setDisplay] = useState(0);
+  const start = useRef(null);
+  const raf = useRef(null);
+
+  useEffect(() => {
+    const target = Number(value) || 0;
+    start.current = null;
+    const animate = (ts) => {
+      if (!start.current) start.current = ts;
+      const progress = Math.min((ts - start.current) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(Math.round(eased * target));
+      if (progress < 1) raf.current = requestAnimationFrame(animate);
+    };
+    raf.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf.current);
+  }, [value, duration]);
+
+  return <span>{display.toLocaleString()}</span>;
+};
+
+// ---------------------------------------------------------------------------
+// Radial progress ring
+// ---------------------------------------------------------------------------
+const RadialRing = ({ pct, size = 56, stroke = 5, color = '#2563eb' }) => {
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const dash = (pct / 100) * circ;
+  return (
+    <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={stroke} />
+      <circle
+        cx={size / 2} cy={size / 2} r={r} fill="none"
+        stroke={color} strokeWidth={stroke}
+        strokeDasharray={`${dash} ${circ}`}
+        strokeLinecap="round"
+        style={{ transition: 'stroke-dasharray 1s cubic-bezier(.4,0,.2,1)' }}
+      />
+    </svg>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Single-candidate card
+// ---------------------------------------------------------------------------
+const SingleCandidateResult = ({ result, rank }) => {
+  const candidate = result.candidates[0];
+  const endorsed = candidate.vote_count || 0;
+  const rejected = candidate.rejected_count || 0;
+  const abstained = candidate.abstain_count || 0;
+
+  // Percentages are out of ALL votes cast for this portfolio (incl. abstained)
+  const total = result.total_votes || 1;
+  const endorsedPct = +((endorsed / total) * 100).toFixed(1);
+  const rejectedPct = +((rejected / total) * 100).toFixed(1);
+  const abstainedPct = +((abstained / total) * 100).toFixed(1);
+
+  const passed = endorsed > rejected && result.total_votes > 0;
+  const hasVotes = result.total_votes > 0;
+  const imgUrl = getImageUrl(candidate.picture_url);
+
+  return (
+    <div className="ev-card ev-single" style={{ '--delay': `${rank * 80}ms` }}>
+      <div className="ev-card-rank">#{rank + 1}</div>
+
+      {/* Portrait */}
+      <div className="ev-portrait-wrap">
+        {imgUrl
+          ? <img src={imgUrl} alt={candidate.name} className="ev-portrait" onError={e => e.target.style.display = 'none'} />
+          : <div className="ev-portrait-fallback"><Users size={28} /></div>
+        }
+        {hasVotes && (
+          <div className={`ev-verdict ${passed ? 'ev-verdict--pass' : 'ev-verdict--fail'}`}>
+            {passed ? <CheckCircle size={14} /> : <XCircle size={14} />}
+            {passed ? 'Endorsed' : 'Rejected'}
+          </div>
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="ev-info">
+        <p className="ev-portfolio-label">{result.portfolio_name}</p>
+        <h3 className="ev-name">{candidate.name}</h3>
+
+        {hasVotes ? (
+          <div className="ev-endorse-row">
+            <div className="ev-endorse-stat ev-endorse-stat--yes">
+              <CheckCircle size={13} />
+              <span className="ev-stat-num">{endorsed}</span>
+              <span className="ev-stat-pct">{endorsedPct}%</span>
+            </div>
+            <div className="ev-endorse-divider" />
+            <div className="ev-endorse-stat ev-endorse-stat--no">
+              <XCircle size={13} />
+              <span className="ev-stat-num">{rejected}</span>
+              <span className="ev-stat-pct">{rejectedPct}%</span>
+            </div>
+            <div className="ev-endorse-divider" />
+            <div className="ev-endorse-stat ev-endorse-stat--abs">
+              <MinusCircle size={13} />
+              <span className="ev-stat-num">{abstained}</span>
+              <span className="ev-stat-pct">{abstainedPct}%</span>
+            </div>
+          </div>
+        ) : (
+          <p className="ev-novotes">No votes recorded yet</p>
+        )}
+
+        {/* Stacked progress bar: endorsed | abstained | rejected */}
+        {hasVotes && (
+          <>
+            <div className="ev-bar-track">
+              <div className="ev-bar-fill ev-bar-fill--yes" style={{ width: `${endorsedPct}%` }} />
+              <div className="ev-bar-fill ev-bar-fill--abs" style={{ width: `${abstainedPct}%` }} />
+              <div className="ev-bar-fill ev-bar-fill--no" style={{ width: `${rejectedPct}%` }} />
+            </div>
+            <div className="ev-bar-legend">
+              <span className="ev-bar-legend--yes">✓ Endorsed {endorsedPct}%</span>
+              <span className="ev-bar-legend--abs">– Abstained {abstainedPct}%</span>
+              <span className="ev-bar-legend--no">✗ Rejected {rejectedPct}%</span>
+            </div>
+          </>
+        )}
+
+        {hasVotes && (
+          <div className="ev-total-footer">
+            {result.total_votes} total vote{result.total_votes !== 1 ? 's' : ''}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Multi-candidate card
+// ---------------------------------------------------------------------------
+const MultiCandidateResult = ({ result, rank }) => {
+  const winnerData = resolveWinner(result);
+  const isTie = winnerData === "tie";
+  const winner = isTie ? null : winnerData;
+  const hasVotes = result.total_votes > 0;
+  const maxVotes = Math.max(...result.candidates.map(c => c.vote_count || 0), 1);
+
+  const topVotes = isTie ? Math.max(...result.candidates.map(c => c.vote_count || 0)) : 0;
+  const tiedNames = isTie
+    ? result.candidates.filter(c => (c.vote_count || 0) === topVotes).map(c => c.name)
+    : [];
+
+  return (
+    <div className="ev-card ev-multi" style={{ '--delay': `${rank * 80}ms` }}>
+      <div className="ev-card-rank">#{rank + 1}</div>
+
+      <div className="ev-multi-header">
+        <p className="ev-portfolio-label">{result.portfolio_name}</p>
+        <span className="ev-multi-badge">{result.candidates.length} Candidates</span>
+      </div>
+
+      {/* Winner banner */}
+      {winner && (
+        <div className="ev-winner-banner">
+          <Trophy size={14} />
+          <span>WINNER</span>
+          {getImageUrl(winner.picture_url) && (
+            <img src={getImageUrl(winner.picture_url)} alt={winner.name} className="ev-winner-thumb"
+              onError={e => e.target.style.display = 'none'} />
+          )}
+          <strong>{winner.name}</strong>
+          <span className="ev-winner-votes">
+            {winner.vote_count} votes · {((winner.vote_count / result.total_votes) * 100).toFixed(1)}%
+          </span>
+        </div>
+      )}
+
+      {/* Tie banner */}
+      {isTie && (
+        <div className="ev-tie-banner">
+          <Handshake size={14} />
+          <span>TIE</span>
+          <strong>{tiedNames.join(' & ')}</strong>
+          <span className="ev-winner-votes">{topVotes} votes each</span>
+        </div>
+      )}
+
+      <div className="ev-candidates-list">
+        {result.candidates.map((c, i) => {
+          const votes = c.vote_count || 0;
+          const abstains = c.abstain_count || 0;
+          const pct = hasVotes ? +((votes / result.total_votes) * 100).toFixed(1) : 0;
+          const barW = (votes / maxVotes) * 100;
+          const isWinner = winner && (c.id || c.candidate_id) === (winner.id || winner.candidate_id);
+          const isTied = isTie && votes === topVotes;
+
+          return (
+            <div key={c.id || i} className={`ev-cand-row ${isWinner ? 'ev-cand-row--winner' : ''} ${isTied ? 'ev-cand-row--tied' : ''}`}>
+              <span className="ev-cand-rank">{i + 1}</span>
+              {getImageUrl(c.picture_url)
+                ? <img src={getImageUrl(c.picture_url)} alt={c.name} className="ev-cand-thumb"
+                  onError={e => e.target.style.display = 'none'} />
+                : <div className="ev-cand-thumb ev-cand-thumb--empty"><Users size={12} /></div>
+              }
+              <div className="ev-cand-info">
+                <div className="ev-cand-meta">
+                  <span className="ev-cand-name">{c.name}</span>
+                  <div className="ev-cand-vote-group">
+                    <span className={`ev-cand-votes ${isWinner ? 'ev-cand-votes--winner' : ''} ${isTied ? 'ev-cand-votes--tied' : ''}`}>
+                      {votes}{hasVotes && <span className="ev-cand-pct"> ({pct}%)</span>}
+                    </span>
+                    {abstains > 0 && (
+                      <span className="ev-cand-abstain" title="Abstained">
+                        <MinusCircle size={10} /> {abstains}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="ev-cand-bar-track">
+                  <div
+                    className={`ev-cand-bar ${isWinner ? 'ev-cand-bar--winner' : ''} ${isTied ? 'ev-cand-bar--tied' : ''}`}
+                    style={{ width: `${barW}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {!hasVotes && <p className="ev-novotes ev-novotes--center">Awaiting votes…</p>}
+
+      {hasVotes && (
+        <div className="ev-multi-footer">
+          <span>{result.total_votes} total votes</span>
+          {(result.total_abstained || 0) > 0 && (
+            <span className="ev-multi-footer-abs">
+              <MinusCircle size={10} /> {result.total_abstained} abstained
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Main ResultsView
+// ---------------------------------------------------------------------------
 export const ResultsView = ({ results }) => {
-  const [selectedPortfolio, setSelectedPortfolio] = useState(null);
-  const printRef = useRef();
+  const stats = useMemo(() => {
+    const totalVotes = results.reduce((s, r) => s + (r.total_votes || 0), 0);
+    const totalAbstained = results.reduce((s, r) => s + (r.total_abstained || 0), 0);
+    const winners = results.filter(r => {
+      const w = resolveWinner(r);
+      return w !== null && w !== "tie";
+    }).length;
+    const ties = results.filter(r => resolveWinner(r) === "tie").length;
+    return { totalVotes, totalAbstained, totalPortfolios: results.length, winners, ties };
+  }, [results]);
 
   const handlePrint = () => {
-    const printWindow = window.open('', '', 'height=600,width=900');
-
-    const htmlContent = `
-      <html>
-        <head>
-          <title>Election Results - Print</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 20px; }
-            h1 { text-align: center; color: #333; margin-bottom: 20px; }
-            .summary { margin-bottom: 30px; padding: 15px; background-color: #f5f5f5; border-radius: 5px; }
-            .portfolio-section { page-break-inside: avoid; margin-bottom: 30px; border: 1px solid #ddd; padding: 15px; border-radius: 5px; }
-            .portfolio-title { font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px; }
-            .winner-section { background-color: #fff8e1; border: 2px solid #ffd600; padding: 15px; border-radius: 5px; margin-bottom: 15px; }
-            .winner-badge { color: #f57f17; font-weight: bold; font-size: 14px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-            th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
-            th { background-color: #0066cc; color: white; font-weight: bold; }
-            tr:nth-child(even) { background-color: #f9f9f9; }
-            .vote-percentage { font-weight: bold; color: #0066cc; }
-            @media print {
-              body { margin: 10px; }
-              .portfolio-section { page-break-inside: avoid; }
+    const w = window.open('', '', 'height=700,width=1000');
+    if (!w) return;
+    w.document.write(`<html><head><title>Election Results</title>
+    <style>
+      body{font-family:Arial,sans-serif;margin:24px;color:#111}
+      h1{text-align:center;font-size:28px;margin-bottom:8px}
+      .sub{text-align:center;color:#666;margin-bottom:24px}
+      .card{border:1px solid #ddd;border-radius:8px;padding:16px;margin-bottom:20px;page-break-inside:avoid}
+      .ptitle{font-size:16px;font-weight:700;margin-bottom:8px}
+      .winner{background:#fffbeb;border:2px solid #fbbf24;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-weight:600}
+      .tie{background:#eff6ff;border:2px solid #93c5fd;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-weight:600;color:#1d4ed8}
+      table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
+      th{background:#1e3a8a;color:#fff}
+    </style></head><body>
+    <h1>Official Election Results</h1>
+    <p class="sub">Generated: ${new Date().toLocaleString()} · Total Votes: ${stats.totalVotes} · Portfolios: ${stats.totalPortfolios}</p>
+    ${results.map((r, i) => {
+      const wData = resolveWinner(r);
+      const isTie = wData === "tie";
+      const winner = isTie ? null : wData;
+      const single = isSingleCandidate(r);
+      const topV = isTie ? Math.max(...r.candidates.map(c => c.vote_count || 0)) : 0;
+      const tiedStr = isTie
+        ? r.candidates.filter(c => (c.vote_count || 0) === topV).map(c => c.name).join(' & ')
+        : '';
+      return `<div class="card">
+        <div class="ptitle">${i + 1}. ${r.portfolio_name} — ${r.total_votes} votes (${r.total_abstained || 0} abstained)</div>
+        ${winner ? `<div class="winner">🏆 Winner: ${winner.name} (${winner.vote_count} endorsed votes)</div>` : ''}
+        ${isTie ? `<div class="tie">⚖️ Tie: ${tiedStr} — ${topV} votes each</div>` : ''}
+        <table><thead><tr><th>Candidate</th>
+          ${single
+          ? '<th>Endorsed</th><th>Rejected</th><th>Abstained</th>'
+          : '<th>Endorsed</th><th>Abstained</th><th>% of Total</th>'}
+        </tr></thead>
+        <tbody>${r.candidates.map(c => `<tr>
+          <td>${c.name}</td>
+          ${single
+              ? `<td>${c.vote_count || 0}</td><td>${c.rejected_count || 0}</td><td>${c.abstain_count || 0}</td>`
+              : `<td>${c.vote_count || 0}</td><td>${c.abstain_count || 0}</td><td>${r.total_votes > 0 ? ((c.vote_count / r.total_votes) * 100).toFixed(1) : 0}%</td>`
             }
-          </style>
-        </head>
-        <body>
-          <h1>Election Results Report</h1>
-          <div class="summary">
-            <p><strong>Total Votes:</strong> ${stats.totalVotes}</p>
-            <p><strong>Total Portfolios:</strong> ${stats.totalPortfolios}</p>
-            <p><strong>Winners Determined:</strong> ${stats.winners}</p>
-            <p><strong>Average Votes per Portfolio:</strong> ${stats.avgVotesPerPortfolio}</p>
-            <p><strong>Generated on:</strong> ${new Date().toLocaleString()}</p>
-          </div>
-          ${results.map((result, idx) => `
-            <div class="portfolio-section">
-              <div class="portfolio-title">${idx + 1}. ${result.portfolio_name}</div>
-              <p><strong>Total Votes:</strong> ${result.total_votes}</p>
-              <p><strong>Total Rejected:</strong> ${result.total_rejected}</p>
-              
-              ${result.winner ? `
-                <div class="winner-section">
-                  <div class="winner-badge">🏆 WINNER</div>
-                  <p><strong>${result.winner.name}</strong></p>
-                  <p>Endorsed: ${result.winner.vote_count} | Rejected: ${result.winner.rejected_count || 0}</p>
-                </div>
-              ` : ''}
-              
-              <table>
-                <thead>
-                  <tr>
-                    <th>Rank</th>
-                    <th>Candidate Name</th>
-                    <th>Endorsed</th>
-                    <th>Rejected</th>
-                    <th>Percentage</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${result.candidates.map((c, i) => `
-                    <tr>
-                      <td>#${i + 1}</td>
-                      <td>${c.name}</td>
-                      <td>${c.vote_count || 0}</td>
-                      <td>${c.rejected_count || 0}</td>
-                      <td class="vote-percentage">${result.total_votes > 0 ? ((c.vote_count / result.total_votes) * 100).toFixed(1) : 0}%</td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-          `).join('')}
-        </body>
-      </html>
-    `;
-
-    if (printWindow) {
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-      setTimeout(() => printWindow.print(), 250);
-    }
+        </tr>`).join('')}</tbody></table>
+      </div>`;
+    }).join('')}
+    </body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 300);
   };
-
-  const getImageUrl = (url) => {
-    if (!url) return null;
-    if (url.startsWith('http')) return url;
-    const cleanUrl = url.startsWith('/') ? url : `/${url}`;
-    return cleanUrl;
-  };
-
-  const stats = useMemo(() => {
-    const totalVotes = results.reduce((sum, r) => sum + r.total_votes, 0);
-    const totalPortfolios = results.length;
-    const winnerData = results.map(r => r.winner).filter(Boolean);
-    return {
-      totalVotes,
-      totalPortfolios,
-      winners: winnerData.length,
-      avgVotesPerPortfolio: totalPortfolios ? Math.round(totalVotes / totalPortfolios) : 0,
-    };
-  }, [results]);
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
-        
-        * {
-          font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@500;700&display=swap');
+
+        .ev-root { font-family: 'DM Sans', sans-serif; background: #f0f2f8; min-height: 100%; padding: 32px 24px; }
+
+        .ev-header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 36px; flex-wrap: wrap; gap: 16px; }
+        .ev-eyebrow { display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; color: #2563eb; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 8px; }
+        .ev-eyebrow-dot { width: 6px; height: 6px; background: #2563eb; border-radius: 50%; animation: ev-blink 1.6s ease-in-out infinite; }
+        @keyframes ev-blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+        .ev-title { font-family: 'Syne', sans-serif; font-size: clamp(28px, 4vw, 44px); font-weight: 800; color: #0f172a; line-height: 1.1; letter-spacing: -.02em; }
+        .ev-subtitle { margin-top: 6px; font-size: 14px; color: #64748b; }
+        .ev-print-btn { display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: #fff; border: 2px solid #e2e8f0; border-radius: 12px; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; color: #334155; cursor: pointer; transition: all .2s; white-space: nowrap; }
+        .ev-print-btn:hover { background: #0f172a; color: #fff; border-color: #0f172a; }
+
+        .ev-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 40px; }
+        .ev-stat { background: #fff; border-radius: 16px; padding: 20px 22px; border: 1.5px solid #e2e8f0; display: flex; align-items: center; gap: 16px; transition: transform .2s, box-shadow .2s; }
+        .ev-stat:hover { transform: translateY(-3px); box-shadow: 0 12px 32px -6px rgba(0,0,0,.1); }
+        .ev-stat-icon { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .ev-stat-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; margin-bottom: 2px; }
+        .ev-stat-value { font-family: 'JetBrains Mono', monospace; font-size: 28px; font-weight: 700; color: #0f172a; line-height: 1; }
+
+        .ev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+
+        .ev-card { background: #fff; border-radius: 20px; border: 1.5px solid #e2e8f0; padding: 24px; position: relative; overflow: hidden; animation: ev-slideUp .5s ease-out both; animation-delay: var(--delay, 0ms); transition: transform .25s, box-shadow .25s; }
+        .ev-card:hover { transform: translateY(-4px); box-shadow: 0 20px 48px -10px rgba(15,23,42,.12); }
+        @keyframes ev-slideUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+        .ev-card-rank { position: absolute; top: 16px; right: 18px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; color: #cbd5e1; letter-spacing: .05em; }
+
+        /* Single candidate */
+        .ev-single { display: flex; flex-direction: column; gap: 16px; }
+        .ev-portrait-wrap { position: relative; width: 80px; height: 80px; }
+        .ev-portrait { width: 80px; height: 80px; border-radius: 16px; object-fit: cover; object-position: top; border: 2px solid #e2e8f0; }
+        .ev-portrait-fallback { width: 80px; height: 80px; border-radius: 16px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; color: #94a3b8; border: 2px solid #e2e8f0; }
+        .ev-verdict { position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%); white-space: nowrap; display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 20px; font-size: 10px; font-weight: 700; border: 1.5px solid; }
+        .ev-verdict--pass { background: #f0fdf4; color: #16a34a; border-color: #bbf7d0; }
+        .ev-verdict--fail { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
+        .ev-portfolio-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: #94a3b8; margin-bottom: 2px; }
+        .ev-name { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 700; color: #0f172a; line-height: 1.2; margin: 0 0 12px; }
+        .ev-endorse-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+        .ev-endorse-stat { display: flex; align-items: center; gap: 5px; font-size: 13px; }
+        .ev-endorse-stat--yes { color: #16a34a; }
+        .ev-endorse-stat--no  { color: #dc2626; }
+        .ev-endorse-stat--abs { color: #94a3b8; }
+        .ev-stat-num { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 15px; }
+        .ev-stat-pct { font-size: 11px; opacity: .7; }
+        .ev-endorse-divider { width: 1px; height: 18px; background: #e2e8f0; }
+
+        /* Stacked bar */
+        .ev-bar-track { height: 8px; background: #f1f5f9; border-radius: 99px; display: flex; overflow: hidden; }
+        .ev-bar-fill { height: 100%; transition: width 1s cubic-bezier(.4,0,.2,1); }
+        .ev-bar-fill--yes { background: linear-gradient(90deg, #22c55e, #16a34a); }
+        .ev-bar-fill--abs { background: #cbd5e1; }
+        .ev-bar-fill--no  { background: linear-gradient(90deg, #f87171, #dc2626); }
+        .ev-bar-legend { display: flex; gap: 10px; margin-top: 5px; flex-wrap: wrap; }
+        .ev-bar-legend span { font-size: 10px; font-weight: 600; }
+        .ev-bar-legend--yes { color: #16a34a; }
+        .ev-bar-legend--abs { color: #94a3b8; }
+        .ev-bar-legend--no  { color: #dc2626; }
+        .ev-total-footer { font-size: 11px; color: #94a3b8; margin-top: 8px; text-align: right; border-top: 1px solid #f1f5f9; padding-top: 6px; }
+
+        /* Multi candidate */
+        .ev-multi { display: flex; flex-direction: column; gap: 12px; }
+        .ev-multi-header { display: flex; align-items: center; justify-content: space-between; }
+        .ev-multi-badge { font-size: 10px; font-weight: 700; padding: 3px 8px; background: #eff6ff; color: #2563eb; border-radius: 20px; border: 1px solid #bfdbfe; white-space: nowrap; }
+        .ev-winner-banner { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: linear-gradient(135deg, #fffbeb, #fef3c7); border: 1.5px solid #fcd34d; border-radius: 12px; font-size: 12px; color: #92400e; flex-wrap: wrap; }
+        .ev-winner-banner strong { font-family: 'Syne', sans-serif; font-size: 13px; color: #0f172a; }
+        .ev-winner-thumb { width: 24px; height: 24px; border-radius: 6px; object-fit: cover; object-position: top; border: 1.5px solid #fcd34d; }
+        .ev-winner-votes { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+        .ev-tie-banner { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: linear-gradient(135deg, #eff6ff, #dbeafe); border: 1.5px solid #93c5fd; border-radius: 12px; font-size: 12px; color: #1d4ed8; flex-wrap: wrap; }
+        .ev-tie-banner strong { font-family: 'Syne', sans-serif; font-size: 13px; color: #0f172a; }
+
+        .ev-candidates-list { display: flex; flex-direction: column; gap: 8px; }
+        .ev-cand-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; border: 1.5px solid transparent; transition: background .2s; }
+        .ev-cand-row:hover { background: #f8fafc; }
+        .ev-cand-row--winner { background: #fffbeb; border-color: #fde68a; }
+        .ev-cand-row--tied   { background: #eff6ff; border-color: #bfdbfe; }
+        .ev-cand-rank { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; color: #94a3b8; width: 18px; flex-shrink: 0; }
+        .ev-cand-thumb { width: 36px; height: 36px; border-radius: 8px; object-fit: cover; object-position: top; border: 1.5px solid #e2e8f0; flex-shrink: 0; }
+        .ev-cand-thumb--empty { display: flex; align-items: center; justify-content: center; background: #f1f5f9; color: #94a3b8; }
+        .ev-cand-info { flex: 1; min-width: 0; }
+        .ev-cand-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+        .ev-cand-name { font-size: 13px; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ev-cand-vote-group { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .ev-cand-votes { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #475569; }
+        .ev-cand-votes--winner { color: #b45309; }
+        .ev-cand-votes--tied   { color: #1d4ed8; }
+        .ev-cand-pct { font-size: 10px; font-weight: 500; opacity: .7; }
+        .ev-cand-abstain { display: flex; align-items: center; gap: 2px; font-size: 10px; color: #94a3b8; font-family: 'JetBrains Mono', monospace; }
+        .ev-cand-bar-track { height: 4px; background: #f1f5f9; border-radius: 99px; overflow: hidden; }
+        .ev-cand-bar { height: 100%; border-radius: 99px; background: #94a3b8; transition: width 1s cubic-bezier(.4,0,.2,1); }
+        .ev-cand-bar--winner { background: linear-gradient(90deg, #f59e0b, #d97706); }
+        .ev-cand-bar--tied   { background: linear-gradient(90deg, #60a5fa, #2563eb); }
+        .ev-multi-footer { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 8px; margin-top: 4px; }
+        .ev-multi-footer-abs { display: flex; align-items: center; gap: 4px; }
+
+        .ev-novotes { font-size: 12px; color: #94a3b8; font-style: italic; }
+        .ev-novotes--center { text-align: center; padding: 12px; background: #f8fafc; border-radius: 8px; }
+
+        .ev-empty { text-align: center; padding: 80px 24px; color: #94a3b8; }
+        .ev-empty-icon { width: 72px; height: 72px; background: #f1f5f9; border-radius: 20px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+
+        @media (max-width: 768px) {
+          .ev-stats { grid-template-columns: repeat(2, 1fr); }
+          .ev-grid  { grid-template-columns: 1fr; }
         }
-        
-        .metric-number {
-          font-family: 'JetBrains Mono', monospace;
-        }
-        
-        @keyframes slideIn {
-          from {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        
-        @keyframes trophy-shine {
-          0%, 100% { opacity: 0.2; }
-          50% { opacity: 0.4; }
-        }
-        
-        .result-card {
-          animation: slideIn 0.4s ease-out;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        
-        .result-card:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 20px 40px -10px rgba(0,0,0,0.15);
-        }
-        
-        .trophy-bg {
-          animation: trophy-shine 3s ease-in-out infinite;
-        }
-        
-        .stat-box {
-          transition: all 0.2s ease;
-        }
-        
-        .stat-box:hover {
-          transform: scale(1.03);
-        }
-        
-        .progress-segment {
-          transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        @media (max-width: 480px) {
+          .ev-stats { grid-template-columns: 1fr; }
         }
       `}</style>
 
-      <div className="bg-gradient-to-br from-white via-amber-50/30 to-white rounded-2xl shadow-xl p-6 border border-slate-200">
+      <div className="ev-root">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-lg">
-                <Trophy className="h-6 w-6 text-white" />
-              </div>
-              <h2 className="text-3xl font-bold text-slate-900">Election Results</h2>
+        <div className="ev-header">
+          <div className="ev-header-left">
+            <div className="ev-eyebrow">
+              <div className="ev-eyebrow-dot" />
+              Live Election Results
             </div>
-            <div className="flex items-center gap-3 text-sm text-slate-600">
-              <span className="font-semibold metric-number">{stats.totalVotes.toLocaleString()}</span>
-              <span>votes</span>
-              <span className="text-slate-300">•</span>
-              <span className="font-semibold metric-number">{stats.totalPortfolios}</span>
-              <span>portfolios</span>
-              <span className="text-slate-300">•</span>
-              <span className="font-semibold text-amber-600 metric-number">{stats.winners}</span>
-              <span>winners</span>
-            </div>
+            <h1 className="ev-title">Official Ballot<br />Results</h1>
+            <p className="ev-subtitle">
+              {stats.totalVotes.toLocaleString()} total votes across {stats.totalPortfolios} portfolios
+              {stats.totalAbstained > 0 && ` · ${stats.totalAbstained.toLocaleString()} abstained`}
+            </p>
           </div>
-          <button
-            onClick={handlePrint}
-            className="flex items-center gap-2 px-5 py-2 bg-white border-2 border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 hover:border-slate-400 transition-all font-semibold shadow-sm"
-            title="Print Results"
-          >
-            <Printer className="h-4 w-4" />
-            Print Report
+          <button className="ev-print-btn" onClick={handlePrint}>
+            <Printer size={15} /> Print Report
           </button>
         </div>
 
-        {/* Stats Grid */}
-        {results.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <div className="stat-box p-5 bg-gradient-to-br from-amber-50 to-yellow-100/50 rounded-xl border-2 border-amber-200">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-amber-700 uppercase">Total Votes</p>
-                <BarChart3 className="h-8 w-8 text-amber-600" />
+        {/* Stats */}
+        <div className="ev-stats">
+          {[
+            { label: 'Total Votes', value: stats.totalVotes, icon: <BarChart2 size={20} />, bg: '#eff6ff', color: '#2563eb' },
+            { label: 'Portfolios', value: stats.totalPortfolios, icon: <Award size={20} />, bg: '#fdf4ff', color: '#9333ea' },
+            { label: 'Winners Declared', value: stats.winners, icon: <Trophy size={20} />, bg: '#fffbeb', color: '#d97706' },
+            { label: 'Tied Races', value: stats.ties, icon: <Handshake size={20} />, bg: '#eff6ff', color: '#2563eb' },
+          ].map(({ label, value, icon, bg, color }) => (
+            <div key={label} className="ev-stat">
+              <div className="ev-stat-icon" style={{ background: bg, color }}>{icon}</div>
+              <div className="ev-stat-body">
+                <p className="ev-stat-label">{label}</p>
+                <p className="ev-stat-value"><AnimatedNumber value={value} /></p>
               </div>
-              <p className="text-3xl font-bold text-amber-900 metric-number">{stats.totalVotes.toLocaleString()}</p>
-            </div>
-            <div className="stat-box p-5 bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl border-2 border-blue-200">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-blue-700 uppercase">Portfolios</p>
-                <Award className="h-8 w-8 text-blue-600" />
-              </div>
-              <p className="text-3xl font-bold text-blue-900 metric-number">{stats.totalPortfolios}</p>
-            </div>
-            <div className="stat-box p-5 bg-gradient-to-br from-green-50 to-green-100/50 rounded-xl border-2 border-green-200">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-green-700 uppercase">Winners</p>
-                <Trophy className="h-8 w-8 text-green-600" />
-              </div>
-              <p className="text-3xl font-bold text-green-900 metric-number">{stats.winners}</p>
-            </div>
-            <div className="stat-box p-5 bg-gradient-to-br from-purple-50 to-purple-100/50 rounded-xl border-2 border-purple-200">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-purple-700 uppercase">Avg/Portfolio</p>
-                <Users className="h-8 w-8 text-purple-600" />
-              </div>
-              <p className="text-3xl font-bold text-purple-900 metric-number">{stats.avgVotesPerPortfolio}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Results Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-          {results.map((result, index) => (
-            <div
-              key={result.portfolio_id}
-              className="result-card border-2 border-slate-200 rounded-2xl p-6 bg-white shadow-sm cursor-pointer"
-              style={{ animationDelay: `${index * 0.1}s` }}
-              onClick={() => setSelectedPortfolio(selectedPortfolio === result.portfolio_id ? null : result.portfolio_id)}
-            >
-              {/* Portfolio Header */}
-              <div className="mb-5">
-                <div className="flex items-center gap-2 mb-2">
-                  <Award className="h-5 w-5 text-slate-600" />
-                  <h3 className="text-xl font-bold text-slate-900">{result.portfolio_name}</h3>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 px-3 py-2 rounded-lg inline-flex">
-                  <TrendingUp className="h-4 w-4" />
-                  <span className="font-semibold metric-number">{result.total_votes}</span>
-                  <span>Total Votes</span>
-                </div>
-              </div>
-
-              {/* Winner Section */}
-              {result.winner && (
-                <div className="bg-gradient-to-br from-amber-50 via-yellow-50 to-amber-50 border-2 border-amber-300 rounded-xl p-5 mb-5 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 -mt-4 -mr-4">
-                    <Trophy className="h-24 w-24 text-amber-400 trophy-bg" />
-                  </div>
-                  <div className="relative z-10">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Trophy className="h-5 w-5 text-amber-600" />
-                      <p className="text-xs font-bold text-amber-800 uppercase tracking-wider">Winner</p>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      {result.winner.picture_url ? (
-                        <img
-                          src={getImageUrl(result.winner.picture_url)}
-                          alt={result.winner.name}
-                          className="h-16 w-16 rounded-2xl object-cover border-4 border-white shadow-lg flex-shrink-0"
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-amber-200 to-amber-300 flex items-center justify-center border-4 border-white shadow-lg flex-shrink-0">
-                          <Trophy className="h-8 w-8 text-amber-700" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-lg text-slate-900 truncate">{result.winner.name}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-sm font-bold text-amber-700 metric-number">{result.winner.vote_count}</span>
-                          <span className="text-sm text-slate-600">votes</span>
-                          <span className="text-xs text-slate-500">
-                            ({result.total_votes > 0 ? ((result.winner.vote_count / result.total_votes) * 100).toFixed(1) : 0}%)
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* All Candidates */}
-              <div className="space-y-2.5">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">All Candidates</p>
-                {result.candidates.map((candidate, index) => {
-                  const isWinner = result.winner && candidate.id === result.winner.id;
-                  const endorsedVotes = candidate.vote_count || 0;
-                  const rejectedVotes = candidate.rejected_count || 0;
-                  const portfolioTotal = result.total_votes || 0;
-                  const percentage = portfolioTotal > 0 ? ((endorsedVotes / portfolioTotal) * 100).toFixed(1) : 0;
-
-                  return (
-                    <div
-                      key={candidate.id}
-                      className={`flex items-center justify-between p-3.5 rounded-xl transition-all ${isWinner
-                        ? 'bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-200'
-                        : 'bg-slate-50 hover:bg-slate-100 border-2 border-transparent'
-                        }`}
-                    >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <span className={`text-sm font-bold flex-shrink-0 w-6 ${isWinner ? 'text-amber-600' : 'text-slate-400'
-                          }`}>
-                          #{index + 1}
-                        </span>
-                        {candidate.picture_url ? (
-                          <img
-                            src={getImageUrl(candidate.picture_url)}
-                            alt={candidate.name}
-                            className={`h-10 w-10 rounded-xl object-cover flex-shrink-0 border-2 ${isWinner ? 'border-amber-300' : 'border-slate-200'
-                              }`}
-                            onError={(e) => {
-                              e.target.style.display = 'none';
-                            }}
-                          />
-                        ) : (
-                          <div className={`h-10 w-10 rounded-xl flex items-center justify-center flex-shrink-0 ${isWinner ? 'bg-amber-100 border-2 border-amber-300' : 'bg-slate-200'
-                            }`}>
-                            <Users className={`h-5 w-5 ${isWinner ? 'text-amber-600' : 'text-slate-400'}`} />
-                          </div>
-                        )}
-                        <span className={`font-semibold truncate text-sm ${isWinner ? 'text-slate-900' : 'text-slate-700'
-                          }`}>
-                          {candidate.name}
-                        </span>
-                      </div>
-                      <div className="text-right flex-shrink-0 ml-3">
-                        <div className="flex gap-4 items-end justify-end">
-                          <div>
-                            <p className={`text-lg font-bold metric-number ${isWinner ? 'text-green-700' : 'text-green-600'
-                              }`}>
-                              {endorsedVotes}
-                            </p>
-                            <p className="text-xs text-green-600 metric-number font-medium">endorsed</p>
-                          </div>
-                          <div>
-                            <p className="text-lg font-bold metric-number text-red-600">
-                              {rejectedVotes}
-                            </p>
-                            <p className="text-xs text-red-600 metric-number font-medium">rejected</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Progress Bar */}
-              {result.total_votes > 0 && (
-                <div className="mt-5 pt-5 border-t-2 border-slate-100">
-                  <p className="text-xs font-semibold text-slate-500 uppercase mb-3">Vote Distribution</p>
-                  <div className="flex h-3 rounded-full overflow-hidden bg-slate-200 shadow-inner">
-                    {result.candidates.map((candidate, index) => {
-                      const percentage = (candidate.vote_count / result.total_votes) * 100;
-                      const colors = [
-                        'bg-gradient-to-r from-blue-500 to-blue-600',
-                        'bg-gradient-to-r from-green-500 to-green-600',
-                        'bg-gradient-to-r from-purple-500 to-purple-600',
-                        'bg-gradient-to-r from-orange-500 to-orange-600',
-                        'bg-gradient-to-r from-pink-500 to-pink-600',
-                        'bg-gradient-to-r from-indigo-500 to-indigo-600',
-                      ];
-                      return (
-                        <div
-                          key={candidate.id}
-                          className={`progress-segment ${colors[index % colors.length]}`}
-                          style={{ width: `${percentage}%` }}
-                          title={`${candidate.name}: ${percentage.toFixed(1)}%`}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
             </div>
           ))}
         </div>
 
-        {/* Empty State */}
-        {results.length === 0 && (
-          <div className="text-center py-20">
-            <div className="inline-flex p-5 bg-gradient-to-br from-slate-100 to-slate-200 rounded-2xl mb-5">
-              <Trophy className="h-20 w-20 text-slate-400" />
-            </div>
-            <p className="text-slate-600 text-xl font-semibold mb-2">No results available yet</p>
-            <p className="text-slate-500 text-sm">Results will appear here once voting has started</p>
+        {/* Cards grid */}
+        {results.length > 0 ? (
+          <div className="ev-grid">
+            {results.map((result, i) =>
+              isSingleCandidate(result)
+                ? <SingleCandidateResult key={result.portfolio_id} result={result} rank={i} />
+                : <MultiCandidateResult key={result.portfolio_id} result={result} rank={i} />
+            )}
+          </div>
+        ) : (
+          <div className="ev-empty">
+            <div className="ev-empty-icon"><Trophy size={32} color="#cbd5e1" /></div>
+            <p style={{ fontSize: 18, fontWeight: 600, color: '#475569', marginBottom: 6 }}>No results yet</p>
+            <p style={{ fontSize: 13 }}>Results will appear here once voting begins</p>
           </div>
         )}
       </div>
     </>
   );
 };
+
+export default ResultsView;

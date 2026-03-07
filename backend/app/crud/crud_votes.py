@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, and_, desc, case
-from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime, timezone
@@ -133,15 +132,28 @@ async def get_all_election_results(db: AsyncSession) -> List[Dict[str, Any]]:
     """
     Return election results for all active portfolios in a SINGLE query.
 
-    Previously this called get_election_results() in a Python loop —
-    one query per portfolio.  This version uses a single LEFT OUTER JOIN
-    with GROUP BY so the database does all the aggregation.
+    Winner determination rules:
+      - Multi-candidate: candidate with the most 'endorsed' votes wins.
+        If two or more candidates share the highest endorsed count → TIE,
+        no winner is declared (winner = None).
+      - Single-candidate: endorsed > rejected → passed (handled frontend).
+      - Abstain votes count toward total_votes for the portfolio but do NOT
+        count for or against any candidate in winner determination.
 
     Result shape:
         [{
-            portfolio_id, portfolio_name, total_votes, total_rejected,
-            candidates: [{id, name, picture_url, vote_count, rejected_count, total_votes}],
-            winner: { same shape }
+            portfolio_id, portfolio_name,
+            total_votes,        # endorsed + rejected + abstained (all valid votes)
+            total_rejected,
+            total_abstained,
+            candidates: [{
+                id, name, picture_url,
+                vote_count,      # endorsed votes
+                rejected_count,  # rejected votes
+                abstain_count,   # abstain votes
+                total_votes,     # candidate-level: endorsed + rejected + abstained
+            }],
+            winner: { same shape } | None   (None on tie or no votes)
         }]
     """
     rows = (
@@ -159,6 +171,9 @@ async def get_all_election_results(db: AsyncSession) -> List[Dict[str, Any]]:
                 func.sum(
                     case((Vote.vote_type == "rejected", 1), else_=0)
                 ).label("rejected"),
+                func.sum(
+                    case((Vote.vote_type == "abstained", 1), else_=0)
+                ).label("abstained"),
             )
             .select_from(Portfolio)
             .join(Candidate, Candidate.portfolio_id == Portfolio.id)
@@ -175,42 +190,87 @@ async def get_all_election_results(db: AsyncSession) -> List[Dict[str, Any]]:
                 Candidate.name,
                 Candidate.picture_url,
             )
+            # Order by endorsed DESC so highest vote-getter comes first per portfolio
             .order_by(Portfolio.voting_order, Portfolio.name, desc("endorsed"))
         )
     ).all()
 
+    # ------------------------------------------------------------------
     # Group rows by portfolio
+    # ------------------------------------------------------------------
     portfolio_map: Dict[str, Dict] = {}
+
     for row in rows:
         pid = str(row.portfolio_id)
-        endorsed = int(row.endorsed or 0)
-        rejected = int(row.rejected or 0)
+        endorsed  = int(row.endorsed  or 0)
+        rejected  = int(row.rejected  or 0)
+        abstained = int(row.abstained or 0)
 
         if pid not in portfolio_map:
             portfolio_map[pid] = {
-                "portfolio_id": pid,
-                "portfolio_name": row.portfolio_name,
-                "total_votes": 0,
-                "total_rejected": 0,
-                "candidates": [],
-                "winner": None,
+                "portfolio_id":    pid,
+                "portfolio_name":  row.portfolio_name,
+                "total_votes":     0,   # all valid votes (endorsed + rejected + abstained)
+                "total_rejected":  0,
+                "total_abstained": 0,
+                "candidates":      [],
+                "winner":          None,
             }
 
         candidate_data = {
-            "id": str(row.candidate_id),
-            "name": row.candidate_name,
-            "picture_url": row.picture_url,
-            "vote_count": endorsed,
+            "id":            str(row.candidate_id),
+            "name":          row.candidate_name,
+            "picture_url":   row.picture_url,
+            "vote_count":    endorsed,          # endorsed only
             "rejected_count": rejected,
-            "total_votes": endorsed + rejected,
+            "abstain_count": abstained,
+            "total_votes":   endorsed + rejected + abstained,  # candidate-level total
         }
-        portfolio_map[pid]["candidates"].append(candidate_data)
-        portfolio_map[pid]["total_votes"] += endorsed
-        portfolio_map[pid]["total_rejected"] += rejected
 
-        # First candidate per portfolio (already ordered by DESC endorsed)
-        if portfolio_map[pid]["winner"] is None:
-            portfolio_map[pid]["winner"] = candidate_data
+        portfolio_map[pid]["candidates"].append(candidate_data)
+
+        # Portfolio-level totals include ALL vote types
+        portfolio_map[pid]["total_votes"]     += endorsed + rejected + abstained
+        portfolio_map[pid]["total_rejected"]  += rejected
+        portfolio_map[pid]["total_abstained"] += abstained
+
+    # ------------------------------------------------------------------
+    # Determine winner per portfolio AFTER all candidates are collected.
+    # Winner = candidate with strictly the highest endorsed count.
+    # If two or more candidates share that count → TIE → winner stays None.
+    # ------------------------------------------------------------------
+    for pid, portfolio in portfolio_map.items():
+        candidates = portfolio["candidates"]
+
+        # Only run winner logic when votes have actually been cast
+        if portfolio["total_votes"] == 0:
+            continue
+
+        # Sort candidates by endorsed votes descending (already done by SQL,
+        # but we sort again in Python to be safe after grouping)
+        sorted_cands = sorted(candidates, key=lambda c: c["vote_count"], reverse=True)
+
+        if not sorted_cands:
+            continue
+
+        top_votes = sorted_cands[0]["vote_count"]
+
+        # No winner if nobody has any endorsed votes
+        if top_votes == 0:
+            continue
+
+        # Check for a tie: count how many candidates share the top endorsed count
+        tied = [c for c in sorted_cands if c["vote_count"] == top_votes]
+
+        if len(tied) == 1:
+            # Clear winner
+            portfolio["winner"] = sorted_cands[0]
+        else:
+            # Tie — explicitly set winner to None so the frontend shows "Tied"
+            portfolio["winner"] = None
+
+        # Also re-sort the candidates list in the response (highest endorsed first)
+        portfolio["candidates"] = sorted_cands
 
     return list(portfolio_map.values())
 

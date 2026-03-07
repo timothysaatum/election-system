@@ -8,6 +8,26 @@ const dataCache = new Map();
 const CACHE_TTL = 5000; // 5 seconds
 
 class ApiService {
+  constructor() {
+    this._activeElectionId = null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Active Election ID (in-memory, set by portals on load)
+  // -------------------------------------------------------------------------
+
+  setActiveElectionId(id) {
+    this._activeElectionId = id;
+  }
+
+  getActiveElectionId() {
+    return this._activeElectionId;
+  }
+
+  // -------------------------------------------------------------------------
+  // Core request helpers
+  // -------------------------------------------------------------------------
+
   async request(endpoint, options = {}) {
     const token = localStorage.getItem("admin_token");
     const headers = {
@@ -71,8 +91,11 @@ class ApiService {
 
   clearCache(endpoint = null) {
     if (endpoint) {
-      const cacheKey = `GET:${endpoint}`;
-      dataCache.delete(cacheKey);
+      for (const key of dataCache.keys()) {
+        if (key.includes(endpoint)) {
+          dataCache.delete(key);
+        }
+      }
     } else {
       dataCache.clear();
     }
@@ -82,69 +105,72 @@ class ApiService {
   // SSE Streaming
   // -------------------------------------------------------------------------
 
-  /**
-   * Opens an SSE connection to a streaming endpoint.
-   *
-   * Because the native EventSource API cannot send custom headers (like
-   * Authorization), we pass the JWT as a ?token= query param. The backend
-   * reads it from there as a fallback.
-   *
-   * @param {string} endpoint         - e.g. "/admin/stream/results"
-   * @param {Function} onMessage      - called with the parsed JSON payload on each event
-   * @param {Function} [onError]      - called when a connection error occurs
-   * @param {number}   [interval=3]  - server-side push interval in seconds
-   * @returns {EventSource}           - call .close() to stop streaming
-   */
-  streamSSE(endpoint, onMessage, onError = null, interval = 3) {
+  streamSSE(endpoint, onMessage, onError = null) {
     const token = localStorage.getItem("admin_token");
     if (!token) {
       const err = new Error("No auth token found");
       if (onError) onError(err);
-      return null;
+      return { close: () => { } };
     }
 
-    const url = `${API_BASE_URL}${endpoint}?token=${encodeURIComponent(token)}&interval=${interval}`;
-    const es = new EventSource(url);
+    const controller = new AbortController();
+    const url = `${API_BASE_URL}${endpoint}`;
 
-    es.onmessage = (event) => {
+    const connect = async () => {
       try {
-        const data = JSON.parse(event.data);
-        onMessage(data);
-      } catch (parseError) {
-        console.error("[SSE] Failed to parse message:", parseError);
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`SSE connection failed: ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                onMessage(data);
+              } catch (parseErr) {
+                console.error("[SSE] Failed to parse message:", parseErr);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        console.error("[SSE] Connection error on", endpoint, err);
+        if (onError) onError(err);
+
+        setTimeout(() => {
+          if (!controller.signal.aborted) connect();
+        }, 3000);
       }
     };
 
-    es.addEventListener("error", (event) => {
-      // event here is an SSE error event, not a JS Error object
-      const err = new Error("SSE connection error");
-      console.error("[SSE] Connection error on", endpoint, event);
-      if (onError) onError(err);
-    });
-
-    return es;
+    connect();
+    return { close: () => controller.abort() };
   }
 
-  /**
-   * Stream live election results.
-   * @param {Function} onData   - called with parsed results array on each push
-   * @param {Function} onError  - called on connection error
-   * @param {number} interval   - seconds between server pushes (default 3)
-   * @returns {EventSource}
-   */
-  streamResults(onData, onError = null, interval = 3) {
-    return this.streamSSE("/admin/stream/results", onData, onError, interval);
+  streamResults(onData, onError = null) {
+    return this.streamSSE("/admin/stream/results", onData, onError);
   }
 
-  /**
-   * Stream live election statistics.
-   * @param {Function} onData   - called with parsed stats object on each push
-   * @param {Function} onError  - called on connection error
-   * @param {number} interval   - seconds between server pushes (default 3)
-   * @returns {EventSource}
-   */
-  streamStatistics(onData, onError = null, interval = 3) {
-    return this.streamSSE("/admin/stream/statistics", onData, onError, interval);
+  streamStatistics(onData, onError = null) {
+    return this.streamSSE("/admin/stream/statistics", onData, onError);
   }
 
   // -------------------------------------------------------------------------
@@ -162,10 +188,6 @@ class ApiService {
     return this.requestWithDedup("/auth/admin/verify");
   }
 
-  async refreshToken() {
-    return this.request("/auth/refresh", { method: "POST" });
-  }
-
   getRoleBasedRoute(role) {
     const routes = {
       admin: "/admin",
@@ -173,6 +195,51 @@ class ApiService {
       polling_agent: "/agent",
     };
     return routes[role] || "/";
+  }
+
+  // -------------------------------------------------------------------------
+  // Elections
+  // -------------------------------------------------------------------------
+
+  async getElections() {
+    return this.requestWithDedup("/elections");
+  }
+
+  async createElection(data) {
+    this.clearCache("/elections");
+    return this.request("/elections", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateElection(id, data) {
+    this.clearCache("/elections");
+    return this.request(`/elections/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteElection(id) {
+    this.clearCache("/elections");
+    return this.request(`/elections/${id}`, { method: "DELETE" });
+  }
+
+  async uploadElectionLogo(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const token = localStorage.getItem("admin_token");
+    const response = await fetch(`${API_BASE_URL}/elections/upload-logo`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || "Logo upload failed");
+    }
+    return response.json();
   }
 
   // -------------------------------------------------------------------------
@@ -186,13 +253,19 @@ class ApiService {
   async createPortfolio(data) {
     this.clearCache("/portfolios");
     this.clearCache("/admin/statistics");
-    return this.request("/portfolios", { method: "POST", body: JSON.stringify(data) });
+    return this.request("/portfolios", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async updatePortfolio(id, data) {
     this.clearCache("/portfolios");
     this.clearCache("/admin/statistics");
-    return this.request(`/portfolios/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+    return this.request(`/portfolios/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
   }
 
   async deletePortfolio(id) {
@@ -210,21 +283,27 @@ class ApiService {
   }
 
   async createCandidate(data) {
-    this.clearCache("/candidates?active_only=false");
+    this.clearCache("/candidates");
     this.clearCache("/admin/statistics");
     this.clearCache("/admin/results");
-    return this.request("/candidates", { method: "POST", body: JSON.stringify(data) });
+    return this.request("/candidates", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async updateCandidate(id, data) {
-    this.clearCache("/candidates?active_only=false");
+    this.clearCache("/candidates");
     this.clearCache("/admin/statistics");
     this.clearCache("/admin/results");
-    return this.request(`/candidates/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+    return this.request(`/candidates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
   }
 
   async deleteCandidate(id) {
-    this.clearCache("/candidates?active_only=false");
+    this.clearCache("/candidates");
     this.clearCache("/admin/statistics");
     this.clearCache("/admin/results");
     return this.request(`/candidates/${id}`, { method: "DELETE" });
@@ -250,20 +329,37 @@ class ApiService {
   // Electorates
   // -------------------------------------------------------------------------
 
-  async getElectorates(skip = 0, limit = 100) {
+  async getElectorates(skip = 0, limit = 50) {
     return this.requestWithDedup(`/admin/voters?skip=${skip}&limit=${limit}`);
+  }
+
+  async getAllElectorates() {
+    const PAGE_SIZE = 500;
+    const all = [];
+    let skip = 0;
+    while (true) {
+      const page = await this.request(`/admin/voters?skip=${skip}&limit=${PAGE_SIZE}`);
+      const rows = Array.isArray(page) ? page : (page?.items ?? []);
+      all.push(...rows);
+      if (rows.length < PAGE_SIZE) break;
+      skip += PAGE_SIZE;
+    }
+    return all;
   }
 
   async createElectorate(data) {
     this.clearCache("/admin/voters");
     this.clearCache("/admin/statistics");
-    return this.request("/electorates", { method: "POST", body: JSON.stringify(data) });
+    return this.request("/electorates/", { method: "POST", body: JSON.stringify(data) });
   }
 
   async updateElectorate(id, data) {
     this.clearCache("/admin/voters");
     this.clearCache("/admin/statistics");
-    return this.request(`/electorates/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+    return this.request(`/electorates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
   }
 
   async deleteElectorate(id) {
@@ -275,7 +371,10 @@ class ApiService {
   async bulkCreateElectorates(data) {
     this.clearCache("/admin/voters");
     this.clearCache("/admin/statistics");
-    return this.request("/electorates/bulk", { method: "POST", body: JSON.stringify(data) });
+    return this.request("/electorates/bulk", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async bulkUploadElectorates(file) {
@@ -297,55 +396,20 @@ class ApiService {
   }
 
   // -------------------------------------------------------------------------
-  // Token Generation
+  // Token generation
   // -------------------------------------------------------------------------
 
-  async generateTokensForAll(options = {}) {
+  async regenerateTokenForElectorate(electorateId) {
     this.clearCache("/admin/voters");
-    this.clearCache("/admin/statistics");
-    return this.request("/admin/generate-tokens/all", {
+    this.clearCache("/admin/electorate-tokens");
+    return this.request(`/admin/regenerate-token/${electorateId}`, {
       method: "POST",
-      body: JSON.stringify({
-        election_name: options.election_name || "Election",
-        voting_url: options.voting_url || window.location.origin,
-        send_notifications: options.send_notifications ?? true,
-        notification_methods: options.notification_methods || ["email", "sms"],
-        exclude_voted: options.exclude_voted ?? true,
-      }),
-    });
-  }
-
-  async generateTokensForElectorates(electorate_ids, options = {}) {
-    this.clearCache("/admin/voters");
-    this.clearCache("/admin/statistics");
-    return this.request("/admin/generate-tokens/bulk", {
-      method: "POST",
-      body: JSON.stringify({
-        electorate_ids,
-        election_name: options.election_name || "Election",
-        voting_url: options.voting_url || window.location.origin,
-        send_notifications: options.send_notifications ?? true,
-        notification_methods: options.notification_methods || ["email", "sms"],
-      }),
-    });
-  }
-
-  async regenerateTokenForElectorate(electorate_id, options = {}) {
-    this.clearCache("/admin/voters");
-    this.clearCache("/admin/statistics");
-    return this.request(`/admin/regenerate-token/${electorate_id}`, {
-      method: "POST",
-      body: JSON.stringify({
-        election_name: options.election_name || "Election",
-        voting_url: options.voting_url || window.location.origin,
-        send_notification: options.send_notification ?? true,
-        notification_methods: options.notification_methods || ["email", "sms"],
-      }),
+      body: JSON.stringify({}),
     });
   }
 
   // -------------------------------------------------------------------------
-  // Statistics & Results (one-shot, kept for non-streaming uses)
+  // Statistics & Results
   // -------------------------------------------------------------------------
 
   async getStatistics() {

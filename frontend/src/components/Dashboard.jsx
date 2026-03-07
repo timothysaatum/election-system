@@ -11,9 +11,11 @@ export const Dashboard = ({ stats, electorates = [], onRefresh }) => {
   const votes = stats?.voting?.total_votes || 0;
   const validVotes = stats?.voting?.valid_votes ?? votes;
   const votingPercentage = Number(stats?.voting?.voting_percentage) || (total ? (voted / total) * 100 : 0);
-  const electoratesWithTokens = electorates.filter((e) => e.voting_token);
-  const activeTokens = stats?.tokens?.active_tokens ?? electoratesWithTokens.length;
-  const tokenPercentage = total ? Math.round((activeTokens / total) * 100) : 0;
+  // electorates for it always yields 0.  Use stats.tokens from the statistics
+  // endpoint which is authoritative for token counts.
+  const activeTokens = stats?.tokens?.active_tokens ?? 0;
+  const generatedTokens = stats?.tokens?.generated_tokens ?? activeTokens;
+  const tokenPercentage = total ? Math.round((generatedTokens / total) * 100) : 0;
   const nonVoters = Math.max(total - voted, 0);
 
   const pct = (n) => `${Math.min(Math.max(Math.round(n), 0), 100)}%`;
@@ -250,7 +252,7 @@ export const Dashboard = ({ stats, electorates = [], onRefresh }) => {
                 />
               </div>
               <p className="text-xs text-slate-600 mt-3">
-                <span className="font-semibold text-purple-700">{electoratesWithTokens.length.toLocaleString()}</span> tokens generated
+                <span className="font-semibold text-purple-700">{generatedTokens.toLocaleString()}</span> tokens generated
               </p>
             </div>
           </div>
@@ -344,7 +346,7 @@ export const Dashboard = ({ stats, electorates = [], onRefresh }) => {
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <p className="text-sm font-medium text-purple-700 mb-1">Generated Tokens</p>
-                    <p className="text-4xl font-bold text-purple-900 metric-number">{electoratesWithTokens.length.toLocaleString()}</p>
+                    <p className="text-4xl font-bold text-purple-900 metric-number">{generatedTokens.toLocaleString()}</p>
                   </div>
                   <div className="icon-wrapper">
                     <FileText className="h-12 w-12 text-purple-600" />
@@ -384,7 +386,7 @@ export const Dashboard = ({ stats, electorates = [], onRefresh }) => {
       </div>
 
       {showTokensModal && (
-        <TokensModal electorates={electoratesWithTokens} onClose={() => setShowTokensModal(false)} />
+        <TokensModal electorates={electorates} onClose={() => setShowTokensModal(false)} />
       )}
     </div>
   );

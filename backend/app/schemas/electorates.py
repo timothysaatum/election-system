@@ -129,6 +129,46 @@ class StudentIDConverter:
             return False
         
         return True
+    
+class ElectionBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    logo_url: Optional[str] = None
+    logo_filename: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("Election name cannot be empty")
+        return v
+
+
+class ElectionCreate(ElectionBase):
+    pass
+
+
+class ElectionUpdate(BaseModel):
+    name: Optional[str] = None
+    logo_url: Optional[str] = None
+    logo_filename: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v):
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Election name cannot be empty")
+        return v
+
+
+class ElectionOut(ElectionBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ElectorateBase(BaseModel):
@@ -456,7 +496,7 @@ class CandidateOut(CandidateBase):
 class VoteCreate(BaseModel):
     portfolio_id: uuid.UUID
     candidate_id: uuid.UUID
-    vote_type: str = "endorsed"  # "endorsed" or "rejected"
+    vote_type: str = "endorsed"  # "endorsed" or "rejected" or "abstain"
 
 
 class VotingCreation(BaseModel):
@@ -615,4 +655,8 @@ __all__ = [
     "AdminLoginResponse",
     "AdminVerifyResponse",
     "PasswordHashResponse",
+    "ElectionBase",
+    "ElectionCreate",
+    "ElectionUpdate",
+    "ElectionOut",
 ]

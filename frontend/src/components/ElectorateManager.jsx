@@ -1,18 +1,19 @@
-import { useState, useMemo, useRef } from 'react';
-import { Plus, Edit2, Trash2, Upload, Download, FileSpreadsheet, Search, Printer, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { Plus, Edit2, Trash2, Upload, Download, FileSpreadsheet, Search, Printer, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 import { ConfirmModal, AlertModal } from './Modal';
 import { ToastContainer } from './Toast';
 import { useModal } from '../hooks/useModal';
 import { useToast } from '../hooks/useToast';
 
-// Helper function to format student ID for display (convert hyphens to slashes)
 const formatStudentId = (studentId) => {
   if (!studentId) return studentId;
   return studentId.replace(/-/g, '/');
 };
 
-export const ElectorateManager = ({ electorates, onUpdate }) => {
+export const ElectorateManager = ({ electorates: electoratesProp, onUpdate, activeElection }) => {
+  const [electorates, setElectorates] = useState(electoratesProp || []);
+  const [fetchLoading, setFetchLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -20,7 +21,25 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterProgram, setFilterProgram] = useState('');
 
-  // Pagination state
+  const fetchAllElectorates = useCallback(async () => {
+    setFetchLoading(true);
+    try {
+      const all = await api.getAllElectorates();
+      setElectorates(all);
+    } catch (err) {
+      setElectorates(electoratesProp || []);
+    } finally {
+      setFetchLoading(false);
+    }
+  }, [electoratesProp]);
+
+  useEffect(() => { fetchAllElectorates(); }, []);
+
+  const handleUpdate = useCallback(async () => {
+    await onUpdate();
+    await fetchAllElectorates();
+  }, [onUpdate, fetchAllElectorates]);
+
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
@@ -55,8 +74,6 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
             th { background-color: #0066cc; color: white; font-weight: bold; }
             tr:nth-child(even) { background-color: #f9f9f9; }
             tr:hover { background-color: #f0f0f0; }
-            .voted { color: green; font-weight: bold; }
-            .pending { color: #ff9800; font-weight: bold; }
             .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; }
             .voted-badge { background-color: #e8f5e9; color: #2e7d32; }
             .pending-badge { background-color: #fff3e0; color: #e65100; }
@@ -143,7 +160,6 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
       (!filterProgram || e.program === filterProgram)
     ), [electorates, searchTerm, filterProgram]);
 
-  // Pagination calculations
   const totalItems = filteredElectorates.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage);
 
@@ -156,52 +172,27 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
   const showingFrom = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
   const showingTo = Math.min(currentPage * itemsPerPage, totalItems);
 
-  // Reset to page 1 when filters change
-  const handleSearchChange = (value) => {
-    setSearchTerm(value);
-    setCurrentPage(1);
-  };
+  const handleSearchChange = (value) => { setSearchTerm(value); setCurrentPage(1); };
+  const handleFilterChange = (value) => { setFilterProgram(value); setCurrentPage(1); };
+  const handleItemsPerPageChange = (e) => { setItemsPerPage(parseInt(e.target.value)); setCurrentPage(1); };
 
-  const handleFilterChange = (value) => {
-    setFilterProgram(value);
-    setCurrentPage(1);
-  };
-
-  const handleItemsPerPageChange = (e) => {
-    const newItemsPerPage = parseInt(e.target.value);
-    setItemsPerPage(newItemsPerPage);
-    setCurrentPage(1);
-  };
-
-  // Page navigation
   const goToFirstPage = () => setCurrentPage(1);
   const goToLastPage = () => setCurrentPage(totalPages);
   const goToNextPage = () => setCurrentPage((prev) => Math.min(prev + 1, totalPages));
   const goToPreviousPage = () => setCurrentPage((prev) => Math.max(prev - 1, 1));
   const goToPage = (page) => setCurrentPage(page);
 
-  // Generate page numbers
   const getPageNumbers = () => {
     const pages = [];
     const maxVisible = 5;
-
     if (totalPages <= maxVisible) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
     } else {
       let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
       let endPage = Math.min(totalPages, startPage + maxVisible - 1);
-
-      if (endPage - startPage < maxVisible - 1) {
-        startPage = Math.max(1, endPage - maxVisible + 1);
-      }
-
-      for (let i = startPage; i <= endPage; i++) {
-        pages.push(i);
-      }
+      if (endPage - startPage < maxVisible - 1) startPage = Math.max(1, endPage - maxVisible + 1);
+      for (let i = startPage; i <= endPage; i++) pages.push(i);
     }
-
     return pages;
   };
 
@@ -214,44 +205,25 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
         program: formData.program,
         year_level: Number(formData.year_level),
       };
-
-      if (formData.phone_number && formData.phone_number.trim() !== '') {
-        payload.phone_number = formData.phone_number;
-      }
-
-      if (formData.email && formData.email.trim() !== '') {
-        payload.email = formData.email;
-      }
-
+      if (formData.phone_number && formData.phone_number.trim() !== '') payload.phone_number = formData.phone_number;
+      if (formData.email && formData.email.trim() !== '') payload.email = formData.email;
       if (editingId) {
         await api.updateElectorate(editingId, payload);
       } else {
         await api.createElectorate(payload);
       }
       resetForm();
-      onUpdate();
-
+      handleUpdate();
       toast.showSuccess(`Voter ${editingId ? 'updated' : 'created'} successfully`);
     } catch (err) {
-      await alertModal.showAlert({
-        title: 'Operation Failed',
-        message: err.message,
-        type: 'error'
-      });
+      await alertModal.showAlert({ title: 'Operation Failed', message: err.message, type: 'error' });
     }
   };
 
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
-    setFormData({
-      student_id: '',
-      name: '',
-      program: '',
-      year_level: 100,
-      phone_number: '',
-      email: '',
-    });
+    setFormData({ student_id: '', name: '', program: '', year_level: 100, phone_number: '', email: '' });
   };
 
   const handleEdit = (electorate) => {
@@ -273,92 +245,48 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
       message: 'Are you sure you want to delete this voter? This action cannot be undone.',
       type: 'danger'
     });
-
     if (!confirmed) return;
-
     try {
       await api.deleteElectorate(id);
-      onUpdate();
+      handleUpdate();
       toast.showSuccess('Voter deleted successfully');
     } catch (err) {
-      await alertModal.showAlert({
-        title: 'Delete Failed',
-        message: err.message,
-        type: 'error'
-      });
+      await alertModal.showAlert({ title: 'Delete Failed', message: err.message, type: 'error' });
     }
   };
 
   const handleExcelUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
-    // Validate file type - accept Excel AND CSV files
     if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls') && !file.name.endsWith('.csv')) {
-      await alertModal.showAlert({
-        title: 'Invalid File Type',
-        message: 'Please select an Excel or CSV file (.xlsx, .xls, or .csv)',
-        type: 'error'
-      });
+      await alertModal.showAlert({ title: 'Invalid File Type', message: 'Please select an Excel or CSV file (.xlsx, .xls, or .csv)', type: 'error' });
       return;
     }
-
-    // Validate file size (max 10MB)
     if (file.size > 10 * 1024 * 1024) {
-      await alertModal.showAlert({
-        title: 'File Too Large',
-        message: 'File size must be less than 10MB',
-        type: 'error'
-      });
+      await alertModal.showAlert({ title: 'File Too Large', message: 'File size must be less than 10MB', type: 'error' });
       return;
     }
-
     try {
       setUploading(true);
       setUploadResult(null);
-
       const result = await api.bulkUploadElectorates(file);
-
-      setUploadResult({
-        success: true,
-        count: result.length,
-        message: `Successfully uploaded ${result.length} voters!`
-      });
-
-      onUpdate();
-
-      // Clear file input
+      const message = `Uploaded ${result.total} voters — ${result.inserted} new, ${result.existing_skipped} already existed. Voter roll sync: ${result.voter_roll_sync}.`;
+      setUploadResult({ success: true, count: result.inserted, message });
+      handleUpdate();
       e.target.value = '';
-
-      toast.showSuccess(`Successfully uploaded ${result.length} voters!`);
+      toast.showSuccess(`${result.inserted} new voters added. Voter roll syncing in background.`);
     } catch (err) {
-      setUploadResult({
-        success: false,
-        message: 'Upload failed: ' + err.message
-      });
-
-      await alertModal.showAlert({
-        title: 'Upload Failed',
-        message: err.message,
-        type: 'error'
-      });
+      setUploadResult({ success: false, message: 'Upload failed: ' + err.message });
+      await alertModal.showAlert({ title: 'Upload Failed', message: err.message, type: 'error' });
     } finally {
       setUploading(false);
     }
   };
 
   const downloadTemplate = () => {
-    // Create CSV template
     const headers = ['student_id', 'name', 'program', 'year_level', 'phone_number', 'email'];
     const sample = ['MLS/0201/19', 'John Doe', 'Computer Science', '300', '0244123456', 'student@example.com'];
-
-    const csvContent = [
-      headers.join(','),
-      sample.join(','),
-      // Add a few empty rows for users to fill
-      ',,,,,,'
-    ].join('\n');
-
+    const csvContent = [headers.join(','), sample.join(','), ',,,,,,'].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -380,45 +308,35 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
         <div className="flex justify-between items-center mb-6">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">Voters (Electorates)</h2>
-            <p className="text-sm text-gray-600 mt-1">{stats.total} total • {stats.voted} voted ({Math.round(stats.voted / stats.total * 100) || 0}%) • {stats.tokenized} tokenized</p>
+            <p className="text-sm text-gray-600 mt-1">
+              {fetchLoading
+                ? <span className="flex items-center gap-1.5"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Loading all voters…</span>
+                : <>{stats.total} total • {stats.voted} voted ({Math.round(stats.voted / stats.total * 100) || 0}%) • {stats.tokenized} tokenized</>
+              }
+            </p>
           </div>
           <div className="flex gap-2">
-            <button
-              onClick={downloadTemplate}
-              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
-              title="Download Excel Template"
-            >
-              <Download className="h-5 w-5" />
-              Template
+            <button onClick={fetchAllElectorates} disabled={fetchLoading}
+              className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50">
+              <RefreshCw className={`h-5 w-5 ${fetchLoading ? 'animate-spin' : ''}`} />
+              {fetchLoading ? 'Loading…' : 'Refresh'}
             </button>
-
-            <button
-              onClick={handlePrint}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-              title="Print Voters List"
-            >
-              <Printer className="h-5 w-5" />
-              Print
+            <button onClick={downloadTemplate}
+              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
+              <Download className="h-5 w-5" /> Template
             </button>
-
+            <button onClick={handlePrint}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+              <Printer className="h-5 w-5" /> Print
+            </button>
             <label className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 cursor-pointer transition-colors">
               <Upload className="h-5 w-5" />
               {uploading ? 'Uploading...' : 'Bulk Upload'}
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                onChange={handleExcelUpload}
-                className="hidden"
-                disabled={uploading}
-              />
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleExcelUpload} className="hidden" disabled={uploading} />
             </label>
-
-            <button
-              onClick={() => setShowForm(!showForm)}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Plus className="h-5 w-5" />
-              Add Voter
+            <button onClick={() => setShowForm(!showForm)}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+              <Plus className="h-5 w-5" /> Add Voter
             </button>
           </div>
         </div>
@@ -468,90 +386,55 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <div className="relative">
             <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search by Student ID or Name..."
-              value={searchTerm}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+            <input type="text" placeholder="Search by Student ID or Name..."
+              value={searchTerm} onChange={(e) => handleSearchChange(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
           </div>
-          <select
-            value={filterProgram}
-            onChange={(e) => handleFilterChange(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
+          <select value={filterProgram} onChange={(e) => handleFilterChange(e.target.value)}
+            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
             <option value="">All Programs</option>
-            {stats.programs.map(p => (
-              <option key={p.name} value={p.name}>{p.name}</option>
-            ))}
+            {stats.programs.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
           </select>
         </div>
 
-        {/* Upload Result Alert */}
         {uploadResult && (
-          <div className={`mb-6 p-4 rounded-lg ${uploadResult.success
-            ? 'bg-green-50 border border-green-200 text-green-800'
-            : 'bg-red-50 border border-red-200 text-red-800'
-            }`}>
+          <div className={`mb-6 p-4 rounded-lg ${uploadResult.success ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <FileSpreadsheet className="h-5 w-5" />
                 <span>{uploadResult.message}</span>
               </div>
-              <button
-                onClick={() => setUploadResult(null)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                ×
-              </button>
+              <button onClick={() => setUploadResult(null)} className="text-gray-500 hover:text-gray-700">×</button>
             </div>
           </div>
         )}
 
-        {/* Form */}
         {showForm && (
           <form onSubmit={handleSubmit} className="mb-6 p-4 bg-gray-50 rounded-lg">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Student ID *</label>
-                <input
-                  type="text"
-                  value={formData.student_id}
+                <input type="text" value={formData.student_id}
                   onChange={(e) => setFormData({ ...formData, student_id: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  placeholder="MLS/0201/19"
-                  required
-                />
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg" placeholder="MLS/0201/19" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
-                <input
-                  type="text"
-                  value={formData.name}
+                <input type="text" value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  placeholder="John Doe"
-                />
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg" placeholder="John Doe" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Program *</label>
-                <input
-                  type="text"
-                  value={formData.program}
+                <input type="text" value={formData.program}
                   onChange={(e) => setFormData({ ...formData, program: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  required
-                />
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Year Level *</label>
-                <select
-                  value={formData.year_level}
+                <select value={formData.year_level}
                   onChange={(e) => setFormData({ ...formData, year_level: parseInt(e.target.value) })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  required
-                >
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg" required>
                   <option value={100}>100</option>
                   <option value={200}>200</option>
                   <option value={300}>300</option>
@@ -562,44 +445,28 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number</label>
-                <input
-                  type="tel"
-                  value={formData.phone_number}
+                <input type="tel" value={formData.phone_number}
                   onChange={(e) => setFormData({ ...formData, phone_number: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  placeholder="0244123456"
-                />
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg" placeholder="0244123456" />
               </div>
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-                <input
-                  type="email"
-                  value={formData.email}
+                <input type="email" value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  placeholder="student@example.com"
-                />
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg" placeholder="student@example.com" />
               </div>
             </div>
             <div className="flex gap-2 mt-4">
-              <button
-                type="submit"
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-              >
+              <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
                 {editingId ? 'Update' : 'Create'}
               </button>
-              <button
-                type="button"
-                onClick={resetForm}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
-              >
+              <button type="button" onClick={resetForm} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300">
                 Cancel
               </button>
             </div>
           </form>
         )}
 
-        {/* Table */}
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -627,33 +494,17 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {formatStudentId(electorate.student_id)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                    {electorate.name || 'N/A'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {electorate.program || 'N/A'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {electorate.year_level || 'N/A'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {electorate.phone_number || 'N/A'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {electorate.email || 'N/A'}
-                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{electorate.name || 'N/A'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{electorate.program || 'N/A'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{electorate.year_level || 'N/A'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{electorate.phone_number || 'N/A'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{electorate.email || 'N/A'}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => handleEdit(electorate)}
-                        className="text-blue-600 hover:text-blue-900"
-                      >
+                      <button onClick={() => handleEdit(electorate)} className="text-blue-600 hover:text-blue-900">
                         <Edit2 className="h-4 w-4" />
                       </button>
-                      <button
-                        onClick={() => handleDelete(electorate.id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
+                      <button onClick={() => handleDelete(electorate.id)} className="text-red-600 hover:text-red-900">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
@@ -664,29 +515,19 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
           </table>
         </div>
 
-        {/* Pagination Footer */}
         {filteredElectorates.length > 0 && (
           <div className="mt-4 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-lg">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-              {/* Showing info & Items per page */}
               <div className="flex items-center gap-4">
                 <div className="text-sm text-gray-600">
                   Showing <span className="font-semibold text-gray-900">{showingFrom}</span> to{" "}
                   <span className="font-semibold text-gray-900">{showingTo}</span> of{" "}
                   <span className="font-semibold text-gray-900">{totalItems}</span> voters
                 </div>
-
-                {/* Items per page selector */}
                 <div className="flex items-center gap-2">
-                  <label htmlFor="itemsPerPage" className="text-sm text-gray-600">
-                    Show:
-                  </label>
-                  <select
-                    id="itemsPerPage"
-                    value={itemsPerPage}
-                    onChange={handleItemsPerPageChange}
-                    className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
+                  <label htmlFor="itemsPerPage" className="text-sm text-gray-600">Show:</label>
+                  <select id="itemsPerPage" value={itemsPerPage} onChange={handleItemsPerPageChange}
+                    className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     <option value={10}>10</option>
                     <option value={25}>25</option>
                     <option value={50}>50</option>
@@ -694,67 +535,32 @@ export const ElectorateManager = ({ electorates, onUpdate }) => {
                   </select>
                 </div>
               </div>
-
-              {/* Pagination controls */}
               <div className="flex items-center gap-2">
-                {/* First page */}
-                <button
-                  onClick={goToFirstPage}
-                  disabled={currentPage === 1}
-                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  title="First page"
-                >
+                <button onClick={goToFirstPage} disabled={currentPage === 1}
+                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                   <ChevronsLeft className="h-4 w-4 text-gray-600" />
                 </button>
-
-                {/* Previous page */}
-                <button
-                  onClick={goToPreviousPage}
-                  disabled={currentPage === 1}
-                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  title="Previous page"
-                >
+                <button onClick={goToPreviousPage} disabled={currentPage === 1}
+                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                   <ChevronLeft className="h-4 w-4 text-gray-600" />
                 </button>
-
-                {/* Page numbers */}
                 <div className="hidden sm:flex items-center gap-1">
                   {getPageNumbers().map((pageNum) => (
-                    <button
-                      key={pageNum}
-                      onClick={() => goToPage(pageNum)}
-                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${currentPage === pageNum
-                        ? "bg-blue-600 text-white"
-                        : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
-                        }`}
-                    >
+                    <button key={pageNum} onClick={() => goToPage(pageNum)}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${currentPage === pageNum ? "bg-blue-600 text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
                       {pageNum}
                     </button>
                   ))}
                 </div>
-
-                {/* Mobile page indicator */}
                 <div className="sm:hidden px-3 py-1.5 text-sm text-gray-700">
                   Page {currentPage} of {totalPages}
                 </div>
-
-                {/* Next page */}
-                <button
-                  onClick={goToNextPage}
-                  disabled={currentPage === totalPages}
-                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  title="Next page"
-                >
+                <button onClick={goToNextPage} disabled={currentPage === totalPages}
+                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                   <ChevronRight className="h-4 w-4 text-gray-600" />
                 </button>
-
-                {/* Last page */}
-                <button
-                  onClick={goToLastPage}
-                  disabled={currentPage === totalPages}
-                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  title="Last page"
-                >
+                <button onClick={goToLastPage} disabled={currentPage === totalPages}
+                  className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                   <ChevronsRight className="h-4 w-4 text-gray-600" />
                 </button>
               </div>

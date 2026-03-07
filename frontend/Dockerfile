@@ -9,29 +9,29 @@ ENV REACT_APP_API_URL=$REACT_APP_API_URL \
     NODE_ENV=$NODE_ENV \
     GENERATE_SOURCEMAP=false
 
+# Install pnpm globally
+RUN npm install -g pnpm
+
 # Copy package files
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml* ./
 
-# Configure npm with longer timeouts and use npm registry
-RUN npm config set fetch-timeout 120000 && \
-    npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 120000 && \
-    npm config set registry https://registry.npmjs.org/
+# Install dependencies with pnpm
+# --frozen-lockfile ensures exact versions
+RUN pnpm install --frozen-lockfile
 
-# Install ALL dependencies and fix ajv conflict
-RUN npm install --legacy-peer-deps --verbose && \
-    npm install ajv@^8.0.0 --save-dev --legacy-peer-deps
+# Fix ajv conflict if needed
+RUN pnpm add -D ajv@^8.0.0
 
 # Copy source code
 COPY . .
 
 # Build the application
-RUN npm run build
+RUN pnpm run build
 
 # Remove source maps for security (if build folder exists)
 RUN find build -name "*.map" -type f -delete 2>/dev/null || true
 
-# Production stage with Nginx
+# ── Production Stage ───────────────────────────────────────
 FROM nginx:alpine
 
 # Install curl for healthcheck
@@ -51,12 +51,7 @@ COPY default.conf /etc/nginx/conf.d/default.conf
 RUN chown -R nginx:nginx /usr/share/nginx/html && \
     chmod -R 755 /usr/share/nginx/html
 
-# ── Fix cache/temp directory permissions ─────────────────────────────────────
-# Docker named volumes are created as root:root on first use.  Nginx workers
-# run as the 'nginx' user and need write access to these directories.
-# Pre-creating them here with the correct owner means Docker copies this
-# ownership into the named volume on first initialisation, so workers can
-# always write without a root entrypoint wrapper.
+# Pre-create cache/log directories with proper permissions
 RUN mkdir -p \
     /var/cache/nginx/client_temp \
     /var/cache/nginx/proxy_temp \
@@ -65,16 +60,13 @@ RUN mkdir -p \
     /var/cache/nginx/scgi_temp \
     /var/log/nginx \
     /var/run && \
-    chown -R nginx:nginx \
-    /var/cache/nginx \
-    /var/log/nginx \
-    /var/run && \
+    chown -R nginx:nginx /var/cache/nginx /var/log/nginx /var/run && \
     chmod -R 755 /var/cache/nginx
 
-# Upload volume mount point — read-only at runtime, no special ownership needed
+# Upload volume mount point — read-only at runtime
 RUN mkdir -p /usr/share/nginx/uploads
 
-# Expose port (changed from 8080 to 80 for simplicity)
+# Expose port 80
 EXPOSE 80
 
 # Health check
