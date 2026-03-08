@@ -33,8 +33,8 @@ const Admin = () => {
   const alertModal = useModal();
   const toast = useToast();
 
-  // Derived: the one active election (for navbar display)
-  const activeElection = elections.find(e => e.is_active) || null;
+  // Derived: the current election — first in the list (no is_active flag in schema)
+  const activeElection = elections.length > 0 ? elections[0] : null;
 
   const loadData = useCallback(async () => {
     try {
@@ -286,7 +286,7 @@ const Admin = () => {
       {/* ── Main Content ── */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === "dashboard" && (
-          <Dashboard stats={stats} electorates={electorates} onRefresh={refreshData} />
+          <Dashboard stats={stats} electorates={electorates} onRefresh={refreshData} election={activeElection} apiBase={process.env.REACT_APP_API_URL || '/api'} />
         )}
         {activeTab === "elections" && (
           <ElectionManager elections={elections} onUpdate={refreshData} />

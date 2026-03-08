@@ -278,29 +278,40 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans text-slate-900 relative">
 
-      {/* ── Watermark ── */}
+      {/* ── Tiled watermark ── */}
       {electionLogoUrl && (
         <div
           aria-hidden="true"
           style={{
-            position: "fixed", inset: 0, zIndex: 1,
-            display: "flex", alignItems: "center", justifyContent: "center",
+            position: "fixed", inset: 0, zIndex: 0,
             overflow: "hidden", pointerEvents: "none",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, 120px)",
+            gridTemplateRows: "repeat(auto-fill, 120px)",
+            gap: "32px",
+            padding: "24px",
+            transform: "rotate(-15deg) scale(1.4)",
+            transformOrigin: "center center",
           }}
         >
-          <img
-            src={electionLogoUrl}
-            alt=""
-            style={{
-              width: "55vw", maxWidth: "600px",
-              opacity: 0.15,
-              filter: "grayscale(50%)",
-              mixBlendMode: "multiply",
-              userSelect: "none",
-              pointerEvents: "none",
-            }}
-            onError={(e) => { e.target.style.display = "none"; }}
-          />
+          {Array.from({ length: 80 }).map((_, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <img
+                src={electionLogoUrl}
+                alt=""
+                style={{
+                  width: "64px",
+                  height: "64px",
+                  objectFit: "contain",
+                  opacity: 0.07,
+                  filter: "grayscale(100%)",
+                  userSelect: "none",
+                  pointerEvents: "none",
+                }}
+                onError={(e) => { e.target.style.display = "none"; }}
+              />
+            </div>
+          ))}
         </div>
       )}
 

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Users, BarChart3, FileText, UserCheck, Eye, TrendingUp, RefreshCw, ChevronRight } from "lucide-react";
 import { TokensModal } from "./TokensModal";
 
-export const Dashboard = ({ stats, electorates = [], onRefresh }) => {
+export const Dashboard = ({ stats, electorates = [], onRefresh, election, apiBase }) => {
   const [showTokensModal, setShowTokensModal] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 

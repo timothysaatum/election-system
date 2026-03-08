@@ -112,41 +112,74 @@ const TokenVerification = ({ onVerified }) => {
 
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4 relative">
 
-        {/* ── Watermark ── */}
+        {/* ── Tiled watermark ── */}
         {electionLogoUrl && (
           <div
             aria-hidden="true"
             style={{
               position: 'fixed', inset: 0, zIndex: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
               overflow: 'hidden', pointerEvents: 'none',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, 120px)',
+              gridTemplateRows: 'repeat(auto-fill, 120px)',
+              gap: '32px',
+              padding: '24px',
+              transform: 'rotate(-15deg) scale(1.4)',
+              transformOrigin: 'center center',
             }}
           >
-            <img
-              src={electionLogoUrl}
-              alt=""
-              style={{
-                width: '55vw', maxWidth: '640px',
-                opacity: 0.15,
-                filter: 'grayscale(50%)',
-                mixBlendMode: 'multiply',
-                userSelect: 'none',
-                pointerEvents: 'none',
-              }}
-              onError={(e) => { e.target.style.display = 'none'; }}
-            />
+            {Array.from({ length: 80 }).map((_, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <img
+                  src={electionLogoUrl}
+                  alt=""
+                  style={{
+                    width: '64px',
+                    height: '64px',
+                    objectFit: 'contain',
+                    opacity: 0.07,
+                    filter: 'grayscale(100%)',
+                    userSelect: 'none',
+                    pointerEvents: 'none',
+                  }}
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              </div>
+            ))}
           </div>
         )}
 
         <div className="verify-card bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 border-2 border-slate-200 relative z-10">
-          {/* Header with Icon */}
+          {/* Header: election logo + name + page title */}
           <div className="text-center mb-8">
-            <div className="relative inline-block mb-6">
-              <div className="absolute inset-0 bg-blue-500 rounded-full pulse-ring"></div>
-              <div className="relative w-20 h-20 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-full flex items-center justify-center shadow-xl float-icon">
-                <Shield className="w-10 h-10 text-white" />
-              </div>
+
+            {/* Election logo / fallback */}
+            <div className="flex flex-col items-center gap-2 mb-5">
+              {electionLogoUrl ? (
+                <img
+                  src={electionLogoUrl}
+                  alt={election?.name || 'Election'}
+                  className="h-20 w-20 rounded-2xl object-contain border-2 border-slate-200 bg-white shadow-lg float-icon"
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              ) : (
+                <div className="relative inline-block">
+                  <div className="absolute inset-0 bg-blue-500 rounded-full pulse-ring"></div>
+                  <div className="relative w-20 h-20 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-full flex items-center justify-center shadow-xl float-icon">
+                    <Shield className="w-10 h-10 text-white" />
+                  </div>
+                </div>
+              )}
+
+              {/* Election name */}
+              {election?.name && (
+                <p className="text-sm font-black uppercase tracking-widest text-blue-600 mt-1">
+                  {election.name}
+                </p>
+              )}
             </div>
+
+            {/* Page title */}
             <h1 className="text-4xl font-bold text-slate-900 mb-3">Voter Verification</h1>
             <p className="text-slate-600 text-lg">Enter your details to proceed</p>
           </div>
