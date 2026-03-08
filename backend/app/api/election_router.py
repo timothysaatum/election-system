@@ -1,7 +1,3 @@
-"""
-app/routers/elections.py
-"""
-
 import os
 import uuid
 from typing import List
@@ -130,9 +126,9 @@ async def delete_election_logo(
 @router.get("/active", response_model=ElectionOut)
 async def get_current_active_election(
     db: AsyncSession = Depends(get_db),
-    current_admin=Depends(get_current_user),
 ):
-    """Get the currently active election."""
+    """Get the currently active election. Public — no auth required.
+    Used by the voting frontend to display election name/logo/watermark."""
     election = await get_active_election(db)
     if not election:
         raise HTTPException(
@@ -147,9 +143,9 @@ async def list_elections(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    current_admin=Depends(get_current_user),
 ):
-    """List all elections, most recently created first."""
+    """List all elections, most recently created first. Public — no auth required.
+    Used by the voting frontend to load election branding (logo, name, watermark)."""
     try:
         elections = await get_elections(db, skip=skip, limit=limit)
         return elections

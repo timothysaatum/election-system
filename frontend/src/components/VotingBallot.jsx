@@ -1,7 +1,3 @@
-/**
- * VotingBallot.jsx
- */
-
 import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import { votingApi } from "../services/votingApi";
 import LoadingSpinner from "./shared/LoadingSpinner";
@@ -115,25 +111,22 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
       try {
         setLoading(true);
 
-        // Load ballot and active election in parallel.
-        // votingApi stores its JWT in sessionStorage — use votingApi.getToken()
-        // not localStorage, otherwise the Authorization header will be empty.
-        const [ballotData, electionsData] = await Promise.all([
-          votingApi.getBallot(),
-          fetch(`${API_BASE_URL}/elections`, {
-            headers: {
-              Authorization: `Bearer ${votingApi.getToken() || ""}`,
-            },
-          })
-            .then((r) => (r.ok ? r.json() : []))
-            .catch(() => []),
-        ]);
+        // Fetch ballot first — this establishes the voter session.
+        // Then fetch elections WITHOUT an Authorization header.
+        // Sending the voter JWT causes "Invalid token type" because the
+        // elections endpoint expects an admin/EC token, not a voter token.
+        // The elections list is public read-only data and needs no auth.
+        const ballotData = await votingApi.getBallot();
+
+        const electionsData = await fetch(`${API_BASE_URL}/elections`)
+          .then((r) => (r.ok ? r.json() : []))
+          .catch(() => []);
 
         setCandidates(ballotData);
 
-        // Pick the active election
-        const active = Array.isArray(electionsData)
-          ? electionsData.find((e) => e.is_active) || null
+        // Use the first election returned (no is_active flag in schema).
+        const active = Array.isArray(electionsData) && electionsData.length > 0
+          ? electionsData[0]
           : null;
         setElection(active);
       } catch (err) {
@@ -290,7 +283,7 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
         <div
           aria-hidden="true"
           style={{
-            position: "fixed", inset: 0, zIndex: 0,
+            position: "fixed", inset: 0, zIndex: 1,
             display: "flex", alignItems: "center", justifyContent: "center",
             overflow: "hidden", pointerEvents: "none",
           }}
@@ -299,9 +292,10 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
             src={electionLogoUrl}
             alt=""
             style={{
-              width: "55vw", maxWidth: "640px",
-              opacity: 0.08,
-              filter: "grayscale(100%)",
+              width: "55vw", maxWidth: "600px",
+              opacity: 0.15,
+              filter: "grayscale(50%)",
+              mixBlendMode: "multiply",
               userSelect: "none",
               pointerEvents: "none",
             }}
@@ -410,8 +404,8 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
                       <button
                         onClick={() => handleSelection(currentPortfolio.id, currentPortfolio.candidates[0].id)}
                         className={`flex flex-col items-center gap-2 px-10 py-5 rounded-2xl font-black text-xl transition-all shadow-lg ${currentSelection === currentPortfolio.candidates[0].id
-                            ? "bg-blue-700 text-white scale-105 ring-4 ring-blue-300"
-                            : "bg-slate-100 text-slate-700 hover:bg-blue-50 hover:text-blue-700 border-2 border-transparent hover:border-blue-200"
+                          ? "bg-blue-700 text-white scale-105 ring-4 ring-blue-300"
+                          : "bg-slate-100 text-slate-700 hover:bg-blue-50 hover:text-blue-700 border-2 border-transparent hover:border-blue-200"
                           }`}
                       >
                         <span className="text-2xl">✓</span>
@@ -430,8 +424,8 @@ const VotingBallot = ({ voterData, onVoteComplete, sessionTime, onSessionEnd }) 
                       <button
                         onClick={() => handleSelection(currentPortfolio.id, "reject")}
                         className={`flex flex-col items-center gap-2 px-10 py-5 rounded-2xl font-black text-xl transition-all shadow-lg ${currentSelection === "reject"
-                            ? "bg-red-700 text-white scale-105 ring-4 ring-red-300"
-                            : "bg-slate-100 text-slate-700 hover:bg-red-50 hover:text-red-700 border-2 border-transparent hover:border-red-200"
+                          ? "bg-red-700 text-white scale-105 ring-4 ring-red-300"
+                          : "bg-slate-100 text-slate-700 hover:bg-red-50 hover:text-red-700 border-2 border-transparent hover:border-red-200"
                           }`}
                       >
                         <span className="text-2xl">✗</span>

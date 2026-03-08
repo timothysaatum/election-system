@@ -1,13 +1,38 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { votingApi } from '../services/votingApi';
 // Added User icon for the Student ID field
 import { Shield, ArrowRight, AlertCircle, Info, Lock, User } from 'lucide-react';
 
+const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
+
 const TokenVerification = ({ onVerified }) => {
   const [token, setToken] = useState('');
-  const [studentId, setStudentId] = useState(''); // Local state for the unused field
+  const [studentId, setStudentId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [election, setElection] = useState(null);
+
+  // Fetch active election for the watermark — no auth header, public endpoint.
+  // If the server still returns 401/403, the watermark simply won't show,
+  // which is handled gracefully by the electionLogoUrl null-check below.
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/elections`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        // Use the first election returned (no is_active flag in schema).
+        const active = Array.isArray(data) && data.length > 0
+          ? data[0]
+          : null;
+        setElection(active);
+      })
+      .catch(() => null);
+  }, []);
+
+  const electionLogoUrl = election?.logo_url
+    ? election.logo_url.startsWith('http')
+      ? election.logo_url
+      : `${API_BASE_URL.replace(/\/api$/, '')}${election.logo_url.startsWith('/') ? '' : '/'}${election.logo_url}`
+    : null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -85,8 +110,35 @@ const TokenVerification = ({ onVerified }) => {
         }
       `}</style>
 
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
-        <div className="verify-card bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 border-2 border-slate-200">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4 relative">
+
+        {/* ── Watermark ── */}
+        {electionLogoUrl && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'fixed', inset: 0, zIndex: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              overflow: 'hidden', pointerEvents: 'none',
+            }}
+          >
+            <img
+              src={electionLogoUrl}
+              alt=""
+              style={{
+                width: '55vw', maxWidth: '640px',
+                opacity: 0.15,
+                filter: 'grayscale(50%)',
+                mixBlendMode: 'multiply',
+                userSelect: 'none',
+                pointerEvents: 'none',
+              }}
+              onError={(e) => { e.target.style.display = 'none'; }}
+            />
+          </div>
+        )}
+
+        <div className="verify-card bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 border-2 border-slate-200 relative z-10">
           {/* Header with Icon */}
           <div className="text-center mb-8">
             <div className="relative inline-block mb-6">
