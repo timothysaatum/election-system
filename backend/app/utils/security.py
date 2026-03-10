@@ -21,7 +21,7 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 assert SECRET_KEY, "SECRET_KEY is not set in the .env file"
 
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480000"))
 VOTING_TOKEN_EXPIRE_HOURS = int(os.getenv("VOTING_TOKEN_EXPIRE_HOURS", "24"))
 
 # Argon2 password hashing configuration
