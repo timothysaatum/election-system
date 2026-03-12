@@ -227,58 +227,107 @@ const MultiCandidateResult = ({ result, rank }) => {
       )}
 
       <div className="ev-candidates-list">
-        {result.candidates.map((c, i) => {
-          const votes = c.vote_count || 0;
-          const abstains = c.abstain_count || 0;
-          const pct = hasVotes ? +((votes / result.total_votes) * 100).toFixed(1) : 0;
-          const barW = (votes / maxVotes) * 100;
-          const isWinner = winner && (c.id || c.candidate_id) === (winner.id || winner.candidate_id);
-          const isTied = isTie && votes === topVotes;
+        {(() => {
+          // Abstained votes are portfolio-level, not per-candidate in multi-candidate races.
+          // Compute votes-only total so percentages don't absorb abstentions.
+          const totalAbstainedForPortfolio =
+            result.total_abstained != null
+              ? result.total_abstained
+              : result.candidates.reduce((s, c) => s + (c.abstain_count || 0), 0);
 
-          return (
-            <div key={c.id || i} className={`ev-cand-row ${isWinner ? 'ev-cand-row--winner' : ''} ${isTied ? 'ev-cand-row--tied' : ''}`}>
-              <span className="ev-cand-rank">{i + 1}</span>
-              {getImageUrl(c.picture_url)
-                ? <img src={getImageUrl(c.picture_url)} alt={c.name} className="ev-cand-thumb"
-                  onError={e => e.target.style.display = 'none'} />
-                : <div className="ev-cand-thumb ev-cand-thumb--empty"><Users size={12} /></div>
-              }
-              <div className="ev-cand-info">
-                <div className="ev-cand-meta">
-                  <span className="ev-cand-name">{c.name}</span>
-                  <div className="ev-cand-vote-group">
+          const votesOnlyTotal = (result.total_votes || 0) - totalAbstainedForPortfolio;
+
+          return result.candidates.map((c, i) => {
+            const votes = c.vote_count || 0;
+            // Use votes-only total as denominator so abstentions don't inflate candidate %
+            const pct = votesOnlyTotal > 0 ? +((votes / votesOnlyTotal) * 100).toFixed(1) : 0;
+            const barW = (votes / maxVotes) * 100;
+            const isWinner = winner && (c.id || c.candidate_id) === (winner.id || winner.candidate_id);
+            const isTied = isTie && votes === topVotes;
+
+            return (
+              <div key={c.id || i} className={`ev-cand-row ${isWinner ? 'ev-cand-row--winner' : ''} ${isTied ? 'ev-cand-row--tied' : ''}`}>
+                <span className="ev-cand-rank">{i + 1}</span>
+                {getImageUrl(c.picture_url)
+                  ? <img src={getImageUrl(c.picture_url)} alt={c.name} className="ev-cand-thumb"
+                    onError={e => e.target.style.display = 'none'} />
+                  : <div className="ev-cand-thumb ev-cand-thumb--empty"><Users size={12} /></div>
+                }
+                <div className="ev-cand-info">
+                  <div className="ev-cand-meta">
+                    <span className="ev-cand-name">{c.name}</span>
                     <span className={`ev-cand-votes ${isWinner ? 'ev-cand-votes--winner' : ''} ${isTied ? 'ev-cand-votes--tied' : ''}`}>
-                      {votes}{hasVotes && <span className="ev-cand-pct"> ({pct}%)</span>}
+                      {votes}{votesOnlyTotal > 0 && <span className="ev-cand-pct"> ({pct}%)</span>}
                     </span>
-                    {abstains > 0 && (
-                      <span className="ev-cand-abstain" title="Abstained">
-                        <MinusCircle size={10} /> {abstains}
-                      </span>
-                    )}
+                  </div>
+                  <div className="ev-cand-bar-track">
+                    <div
+                      className={`ev-cand-bar ${isWinner ? 'ev-cand-bar--winner' : ''} ${isTied ? 'ev-cand-bar--tied' : ''}`}
+                      style={{ width: `${barW}%` }}
+                    />
                   </div>
                 </div>
-                <div className="ev-cand-bar-track">
-                  <div
-                    className={`ev-cand-bar ${isWinner ? 'ev-cand-bar--winner' : ''} ${isTied ? 'ev-cand-bar--tied' : ''}`}
-                    style={{ width: `${barW}%` }}
-                  />
-                </div>
+              </div>
+            );
+          });
+        })()}
+      </div>
+
+      {/* Abstained row — always shown when there are abstentions */}
+      {hasVotes && (() => {
+        const totalAbstainedForPortfolio =
+          result.total_abstained != null
+            ? result.total_abstained
+            : result.candidates.reduce((s, c) => s + (c.abstain_count || 0), 0);
+        if (totalAbstainedForPortfolio <= 0) return null;
+        const abstainPct = result.total_votes > 0
+          ? +((totalAbstainedForPortfolio / result.total_votes) * 100).toFixed(1)
+          : 0;
+        return (
+          <div className="ev-cand-row ev-cand-row--abstain">
+            <span className="ev-cand-rank">–</span>
+            <div className="ev-cand-thumb ev-cand-thumb--empty ev-cand-thumb--abstain">
+              <MinusCircle size={14} />
+            </div>
+            <div className="ev-cand-info">
+              <div className="ev-cand-meta">
+                <span className="ev-cand-name ev-cand-name--abstain">Abstained</span>
+                <span className="ev-cand-votes ev-cand-votes--abstain">
+                  {totalAbstainedForPortfolio}
+                  <span className="ev-cand-pct"> ({abstainPct}%)</span>
+                </span>
+              </div>
+              <div className="ev-cand-bar-track">
+                <div className="ev-cand-bar ev-cand-bar--abstain"
+                  style={{ width: `${abstainPct}%` }} />
               </div>
             </div>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })()}
 
       {!hasVotes && <p className="ev-novotes ev-novotes--center">Awaiting votes…</p>}
 
       {hasVotes && (
         <div className="ev-multi-footer">
           <span>{result.total_votes} total votes</span>
-          {(result.total_abstained || 0) > 0 && (
-            <span className="ev-multi-footer-abs">
-              <MinusCircle size={10} /> {result.total_abstained} abstained
-            </span>
-          )}
+          {(() => {
+            const totalAbstainedForPortfolio =
+              result.total_abstained != null
+                ? result.total_abstained
+                : result.candidates.reduce((s, c) => s + (c.abstain_count || 0), 0);
+            const votesOnlyTotal = result.total_votes - totalAbstainedForPortfolio;
+            return (
+              <>
+                <span>{votesOnlyTotal} candidate votes</span>
+                {totalAbstainedForPortfolio > 0 && (
+                  <span className="ev-multi-footer-abs">
+                    <MinusCircle size={10} /> {totalAbstainedForPortfolio} abstained
+                  </span>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
     </div>
@@ -439,6 +488,11 @@ export const ResultsView = ({ results }) => {
         .ev-cand-votes--tied   { color: #1d4ed8; }
         .ev-cand-pct { font-size: 10px; font-weight: 500; opacity: .7; }
         .ev-cand-abstain { display: flex; align-items: center; gap: 2px; font-size: 10px; color: #94a3b8; font-family: 'JetBrains Mono', monospace; }
+        .ev-cand-row--abstain { background: #f8fafc; border-color: #e2e8f0; border-style: dashed; }
+        .ev-cand-thumb--abstain { color: #94a3b8; background: #f1f5f9; }
+        .ev-cand-name--abstain { color: #94a3b8; font-style: italic; }
+        .ev-cand-votes--abstain { color: #94a3b8; }
+        .ev-cand-bar--abstain { background: #cbd5e1; }
         .ev-cand-bar-track { height: 4px; background: #f1f5f9; border-radius: 99px; overflow: hidden; }
         .ev-cand-bar { height: 100%; border-radius: 99px; background: #94a3b8; transition: width 1s cubic-bezier(.4,0,.2,1); }
         .ev-cand-bar--winner { background: linear-gradient(90deg, #f59e0b, #d97706); }

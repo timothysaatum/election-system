@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours for admin sessions
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480000  # 8 hours for admin sessions
     VOTING_TOKEN_EXPIRE_HOURS: int = 24     # 24 hours for voting tokens
 
     # Database
