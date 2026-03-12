@@ -292,6 +292,19 @@ async def admin_login(
             detail="Invalid credentials",
         )
 
+    # Pick session duration based on role.
+    # Polling agents must stay logged in unattended for the entire voting
+    # period, so they get the longest expiry.
+    role_expiry_map = {
+        "admin":          settings.ADMIN_SESSION_EXPIRE_MINUTES,
+        "ec_official":    settings.EC_OFFICIAL_SESSION_EXPIRE_MINUTES,
+        "polling_agent":  settings.POLLING_AGENT_SESSION_EXPIRE_MINUTES,
+    }
+    session_minutes = role_expiry_map.get(
+        user_config["role"],
+        settings.ADMIN_SESSION_EXPIRE_MINUTES,  # safe fallback
+    )
+
     access_token = TokenManager.create_access_token(
         data={
             "sub": user_config["username"],
@@ -299,7 +312,7 @@ async def admin_login(
             "type": "admin_access",
             "permissions": user_config["permissions"],
         },
-        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        expires_delta=timedelta(minutes=session_minutes),
     )
 
     await SecurityAuditLogger.log(
@@ -308,6 +321,7 @@ async def admin_login(
         actor_id=user_config["username"],
         actor_role=user_config["role"],
         ip_address=client_ip,
+        details={"session_expires_minutes": session_minutes},
         severity="INFO",
         success=True,
     )
@@ -316,7 +330,7 @@ async def admin_login(
     return AdminLoginResponse(
         access_token=access_token,
         token_type="bearer",
-        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        expires_in=session_minutes * 60,
         username=user_config["username"],
         role=user_config["role"],
         permissions=user_config["permissions"],

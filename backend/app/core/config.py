@@ -43,8 +43,16 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480000  # 8 hours for admin sessions
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # fallback / legacy (8 hours)
     VOTING_TOKEN_EXPIRE_HOURS: int = 24     # 24 hours for voting tokens
+
+    # Role-specific session durations (minutes)
+    # Admin (EC Head): full election day + buffer — can re-login if needed
+    ADMIN_SESSION_EXPIRE_MINUTES: int = 720          # 12 hours
+    # EC Officials: full election day — token generation, voter verification
+    EC_OFFICIAL_SESSION_EXPIRE_MINUTES: int = 1440   # 24 hours
+    # Polling Agents: must stay logged in for entire voting period unattended
+    POLLING_AGENT_SESSION_EXPIRE_MINUTES: int = 2880  # 48 hours
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://kratos_user:SecurePass!123@database:5432/kratos_election"
@@ -180,6 +188,11 @@ class ProductionSettings(Settings):
 
     DATABASE_POOL_SIZE: int = 30
     DATABASE_MAX_OVERFLOW: int = 60
+
+    # Slightly tighter in production — adjust to match your actual election window
+    ADMIN_SESSION_EXPIRE_MINUTES: int = 720          # 12 hours
+    EC_OFFICIAL_SESSION_EXPIRE_MINUTES: int = 1440   # 24 hours
+    POLLING_AGENT_SESSION_EXPIRE_MINUTES: int = 2880  # 48 hours
 
     # Tighter rate limits in production
     RATE_LIMIT_AUTH_REQUESTS: int = 3

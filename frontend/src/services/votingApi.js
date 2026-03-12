@@ -128,9 +128,11 @@ class VotingApiService {
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(
-          error.detail || `Request failed with status ${response.status}`
-        );
+        const detail = error.detail;
+        if (detail && typeof detail === "object") {
+          throw new Error(JSON.stringify(detail));
+        }
+        throw new Error(detail || `Request failed with status ${response.status}`);
       }
 
       return response.json();
@@ -212,7 +214,13 @@ class VotingApiService {
         }
       }
 
-      throw new Error(error.detail || "Access forbidden");
+      // detail may be an object (e.g. already_voted payload) — serialize so
+      // callers can JSON.parse it and extract structured fields like voted_at
+      const detail = error.detail;
+      if (detail && typeof detail === "object") {
+        throw new Error(JSON.stringify(detail));
+      }
+      throw new Error(detail || "Access forbidden");
     }
 
     // Handle rate limiting
@@ -227,9 +235,11 @@ class VotingApiService {
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       console.error(`[VotingAPI] Request failed with status ${response.status}:`, error);
-      throw new Error(
-        error.detail || `Request failed with status ${response.status}`
-      );
+      const detail = error.detail;
+      if (detail && typeof detail === "object") {
+        throw new Error(JSON.stringify(detail));
+      }
+      throw new Error(detail || `Request failed with status ${response.status}`);
     }
 
     return response.json();
